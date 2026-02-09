@@ -5,10 +5,82 @@ Allows users to create, edit, and manage investment portfolios.
 
 import streamlit as st
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from portfolio.manager import PortfolioManager, Portfolio
 from ui.components.charts import render_allocation_pie
+from data.fetcher import get_data_fetcher
+
+
+def validate_ticker(ticker: str) -> Tuple[bool, str, pd.DataFrame]:
+    """
+    Validate a ticker symbol by checking if historical data can be fetched.
+    
+    Args:
+        ticker: Stock ticker symbol
+        
+    Returns:
+        Tuple of (is_valid, message, sample_data)
+    """
+    if not ticker or not ticker.strip():
+        return False, "请输入有效的股票代码", pd.DataFrame()
+    
+    ticker = ticker.strip().upper()
+    
+    try:
+        fetcher = get_data_fetcher()
+        # Try to fetch recent 30 days of data to validate
+        df = fetcher.fetch_prices(ticker, lookback_days=30, use_cache=False)
+        
+        if df is None or df.empty:
+            return False, f"❌ 无法获取 {ticker} 的数据，请检查代码是否正确", pd.DataFrame()
+        
+        if ticker not in df.columns:
+            # Check if data was returned under a different name
+            if len(df.columns) == 1:
+                df.columns = [ticker]
+            else:
+                return False, f"❌ 数据获取异常，请检查 {ticker} 是否正确", pd.DataFrame()
+        
+        # Check if we have enough valid data points
+        valid_count = df[ticker].notna().sum()
+        if valid_count < 5:
+            return False, f"❌ {ticker} 历史数据不足（仅有 {valid_count} 条记录）", pd.DataFrame()
+        
+        return True, f"✅ {ticker} 验证通过，获取到 {valid_count} 条历史数据", df
+        
+    except Exception as e:
+        return False, f"❌ 验证 {ticker} 时发生错误: {str(e)}", pd.DataFrame()
+
+
+def validate_multiple_tickers(tickers: List[str]) -> Tuple[List[str], List[str], Dict[str, str]]:
+    """
+    Validate multiple ticker symbols.
+    
+    Args:
+        tickers: List of ticker symbols
+        
+    Returns:
+        Tuple of (valid_tickers, invalid_tickers, messages_dict)
+    """
+    valid = []
+    invalid = []
+    messages = {}
+    
+    for ticker in tickers:
+        ticker = ticker.strip().upper()
+        if not ticker:
+            continue
+            
+        is_valid, message, _ = validate_ticker(ticker)
+        messages[ticker] = message
+        
+        if is_valid:
+            valid.append(ticker)
+        else:
+            invalid.append(ticker)
+    
+    return valid, invalid, messages
 
 
 def render_portfolio_page():
@@ -94,7 +166,7 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
     st.subheader("📈 资产配置")
     
     # Add new ticker
-    col_add1, col_add2, col_add3 = st.columns([2, 1, 1])
+    col_add1, col_add2, col_add3, col_add4 = st.columns([2, 1, 1, 1])
     with col_add1:
         new_ticker = st.text_input(
             "添加标的",
@@ -106,15 +178,43 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
     with col_add3:
         st.write("")  # Spacing
         st.write("")
-        if st.button("➕ 添加", use_container_width=True):
-            if new_ticker and new_ticker not in portfolio.tickers:
-                portfolio.tickers.append(new_ticker)
-                portfolio.weights[new_ticker] = new_weight
-                manager.update(portfolio)
-                st.success(f"已添加 {new_ticker}")
-                st.rerun()
-            elif new_ticker in portfolio.tickers:
-                st.warning(f"{new_ticker} 已存在")
+        validate_clicked = st.button("🔍 验证", use_container_width=True, key="validate_ticker_btn")
+    with col_add4:
+        st.write("")  # Spacing
+        st.write("")
+        add_clicked = st.button("➕ 添加", use_container_width=True, key="add_ticker_btn")
+    
+    # Validation logic
+    if validate_clicked and new_ticker:
+        with st.spinner(f"正在验证 {new_ticker}..."):
+            is_valid, message, sample_df = validate_ticker(new_ticker)
+            if is_valid:
+                st.success(message)
+                if not sample_df.empty:
+                    st.caption("最近价格数据预览:")
+                    st.line_chart(sample_df.tail(20))
+                st.session_state['ticker_validated'] = new_ticker
+            else:
+                st.error(message)
+                st.session_state['ticker_validated'] = None
+    
+    # Add ticker logic
+    if add_clicked:
+        if new_ticker and new_ticker not in portfolio.tickers:
+            # Always validate before adding
+            with st.spinner(f"正在验证并添加 {new_ticker}..."):
+                is_valid, message, _ = validate_ticker(new_ticker)
+                if is_valid:
+                    portfolio.tickers.append(new_ticker)
+                    portfolio.weights[new_ticker] = new_weight
+                    manager.update(portfolio)
+                    st.success(f"已添加 {new_ticker}")
+                    st.session_state['ticker_validated'] = None
+                    st.rerun()
+                else:
+                    st.error(message)
+        elif new_ticker in portfolio.tickers:
+            st.warning(f"{new_ticker} 已存在")
     
     # Edit existing assets
     if portfolio.tickers:
@@ -283,6 +383,23 @@ def render_portfolio_creator(manager: PortfolioManager):
                 total = sum(weights)
                 if abs(total - 100) > 0.1:
                     st.warning(f"⚠️ 权重总和为 {total:.1f}%，将自动归一化")
+                
+                # Validation button for all tickers
+                if st.button("🔍 验证所有标的", key="validate_all_tickers"):
+                    with st.spinner("正在验证所有标的..."):
+                        valid, invalid, messages = validate_multiple_tickers(tickers)
+                        
+                        if valid:
+                            st.success(f"✅ {len(valid)} 个标的验证通过: {', '.join(valid)}")
+                        
+                        if invalid:
+                            st.error(f"❌ {len(invalid)} 个标的验证失败:")
+                            for ticker in invalid:
+                                st.write(f"  • {messages.get(ticker, ticker)}")
+                        
+                        # Store validation result in session state
+                        st.session_state['validated_tickers'] = valid
+                        st.session_state['invalid_tickers'] = invalid
             else:
                 st.error(f"标的数量 ({len(tickers)}) 与权重数量 ({len(weights)}) 不匹配")
         except ValueError as e:
@@ -304,25 +421,33 @@ def render_portfolio_creator(manager: PortfolioManager):
                 if len(tickers) != len(weights_list):
                     st.error("标的数量与权重数量不匹配")
                 else:
-                    weights_dict = dict(zip(tickers, weights_list))
+                    # Validate all tickers before creating
+                    with st.spinner("正在验证所有标的..."):
+                        valid, invalid, messages = validate_multiple_tickers(tickers)
                     
-                    portfolio = Portfolio(
-                        name=name,
-                        tickers=tickers,
-                        weights=weights_dict,
-                        description=description,
-                    )
-                    
-                    if manager.create(portfolio):
-                        st.success(f"✅ 组合 '{name}' 创建成功!")
-                        # Clear template
-                        if 'template_tickers' in st.session_state:
-                            del st.session_state['template_tickers']
-                        if 'template_weights' in st.session_state:
-                            del st.session_state['template_weights']
-                        st.rerun()
+                    if invalid:
+                        st.error(f"以下标的验证失败，无法创建组合:")
+                        for ticker in invalid:
+                            st.write(f"  • {messages.get(ticker, ticker)}")
                     else:
-                        st.error("创建失败，组合名称可能已存在")
+                        weights_dict = dict(zip(tickers, weights_list))
+                        
+                        portfolio = Portfolio(
+                            name=name,
+                            tickers=tickers,
+                            weights=weights_dict,
+                            description=description,
+                        )
+                        
+                        if manager.create(portfolio):
+                            st.success(f"✅ 组合 '{name}' 创建成功!")
+                            # Clear template and validation state
+                            for key in ['template_tickers', 'template_weights', 'validated_tickers', 'invalid_tickers']:
+                                if key in st.session_state:
+                                    del st.session_state[key]
+                            st.rerun()
+                        else:
+                            st.error("创建失败，组合名称可能已存在")
             except ValueError as e:
                 st.error(f"输入格式错误: {e}")
 
