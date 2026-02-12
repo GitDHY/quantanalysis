@@ -221,7 +221,7 @@ def render_subscription_manager(settings, config: NotificationDefaults):
                 key="new_sub_threshold"
             )
         
-        submitted = st.form_submit_button("➕ 添加订阅", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("➕ 添加订阅", type="primary", width="stretch")
         
         if submitted:
             if not notify_email and not notify_wechat:
@@ -317,7 +317,7 @@ def render_scheduler_settings(settings, config: NotificationDefaults):
                 help="选择检查的频率"
             )
         
-        submitted = st.form_submit_button("💾 保存定时设置", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("💾 保存定时设置", type="primary", width="stretch")
         
         if submitted:
             sched_config.enabled = enabled
@@ -447,10 +447,10 @@ def render_email_form(settings, config: NotificationDefaults):
         col_save, col_test = st.columns(2)
         
         with col_save:
-            save_btn = st.form_submit_button("💾 保存邮件设置", use_container_width=True)
+            save_btn = st.form_submit_button("💾 保存邮件设置", width="stretch")
         
         with col_test:
-            test_btn = st.form_submit_button("🧪 发送测试邮件", type="primary", use_container_width=True)
+            test_btn = st.form_submit_button("🧪 发送测试邮件", type="primary", width="stretch")
         
         if save_btn:
             config.smtp_server = smtp_server
@@ -519,7 +519,7 @@ def render_wechat_form(settings, config: NotificationDefaults):
     with col_btn:
         st.write("")  # Spacing
         st.write("")
-        if st.button("🧪 测试", key="test_serverchan", use_container_width=True):
+        if st.button("🧪 测试", key="test_serverchan", width="stretch"):
             if not serverchan_key:
                 st.error("请先填写 SendKey")
             else:
@@ -554,7 +554,7 @@ def render_wechat_form(settings, config: NotificationDefaults):
     with col_btn2:
         st.write("")
         st.write("")
-        if st.button("🧪 测试", key="test_pushplus", use_container_width=True):
+        if st.button("🧪 测试", key="test_pushplus", width="stretch"):
             if not pushplus_token:
                 st.error("请先填写 Token")
             else:
@@ -572,7 +572,7 @@ def render_wechat_form(settings, config: NotificationDefaults):
     st.divider()
     
     # Save button
-    if st.button("💾 保存微信推送设置", type="primary", use_container_width=True):
+    if st.button("💾 保存微信推送设置", type="primary", width="stretch"):
         config.serverchan_key = serverchan_key
         config.pushplus_token = pushplus_token
         
@@ -628,7 +628,7 @@ def render_test_and_run(settings, config: NotificationDefaults):
             email_disabled = not has_email
             if st.button(
                 "📧 测试邮件通知", 
-                use_container_width=True, 
+                width="stretch", 
                 disabled=email_disabled,
                 help="未配置邮件" if email_disabled else "发送测试邮件"
             ):
@@ -644,7 +644,7 @@ def render_test_and_run(settings, config: NotificationDefaults):
             wechat_disabled = not has_wechat
             if st.button(
                 "💬 测试微信通知", 
-                use_container_width=True, 
+                width="stretch", 
                 disabled=wechat_disabled,
                 help="未配置微信推送" if wechat_disabled else "发送测试消息到微信"
             ):
@@ -709,15 +709,15 @@ def render_test_and_run(settings, config: NotificationDefaults):
         col_check, col_notify, col_force = st.columns(3)
         
         with col_check:
-            if st.button("🔍 仅检查信号", use_container_width=True, type="secondary", help="运行策略，查看信号但不发送通知"):
+            if st.button("🔍 仅检查信号", width="stretch", type="secondary", help="运行策略，查看信号但不发送通知"):
                 run_strategy_check(config, selected_sub, send_notification=False)
         
         with col_notify:
-            if st.button("🚀 检查并通知", use_container_width=True, type="primary", help="运行策略，如有调仓信号则发送通知"):
+            if st.button("🚀 检查并通知", width="stretch", type="primary", help="运行策略，如有调仓信号则发送通知"):
                 run_strategy_check(config, selected_sub, send_notification=True)
         
         with col_force:
-            if st.button("📨 强制发送通知", use_container_width=True, help="无论是否有调仓信号，都发送一条测试通知"):
+            if st.button("📨 强制发送通知", width="stretch", help="无论是否有调仓信号，都发送一条测试通知"):
                 send_test_strategy_notification(config, selected_sub)
     
     st.divider()
@@ -732,7 +732,7 @@ def render_test_and_run(settings, config: NotificationDefaults):
     active_count = sum(1 for s in config.subscriptions if s.enabled)
     st.write(f"共 {len(config.subscriptions)} 个订阅，其中 {active_count} 个已启用")
     
-    if st.button("🔄 运行所有订阅检查", use_container_width=True, type="primary"):
+    if st.button("🔄 运行所有订阅检查", width="stretch", type="primary"):
         run_all_subscription_checks(config)
 
 
@@ -871,7 +871,7 @@ def run_strategy_check(config: NotificationDefaults, subscription: NotificationS
             return ''
         
         styled_df = df.style.applymap(highlight_change, subset=['变动 (%)'])
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        st.dataframe(styled_df, width="stretch", hide_index=True)
         
         # Send notification if requested
         if send_notification and changes:
