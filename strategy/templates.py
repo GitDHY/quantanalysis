@@ -308,6 +308,403 @@ def strategy():
         ctx.log("✅ 无需再平衡，配置在容忍范围内")
 '''
 
+# Dual Momentum Strategy
+DUAL_MOMENTUM_TEMPLATE = '''"""
+双动量策略 (Dual Momentum)
+结合绝对动量（与无风险收益比较）和相对动量（资产间比较）。
+Gary Antonacci 提出的经典策略。
+"""
+
+def strategy():
+    weights = ctx.get_current_weights()
+    
+    # 策略参数
+    lookback = 252  # 12个月动量
+    safe_asset = 'GSD.SI'  # 避险资产（如黄金或债券）
+    
+    risk_assets = [t for t in ctx.tickers if t != safe_asset]
+    
+    # 计算各资产动量
+    momentums = {}
+    for ticker in risk_assets:
+        mom = ctx.momentum(ticker, lookback)
+        if not mom.empty:
+            momentums[ticker] = mom.iloc[-1]
+    
+    if not momentums:
+        ctx.log("⚠️ 无法计算动量")
+        return
+    
+    # 找出最强动量资产
+    best_asset = max(momentums, key=momentums.get)
+    best_momentum = momentums[best_asset]
+    
+    ctx.log(f"📊 最强动量: {best_asset} ({best_momentum:.1f}%)")
+    
+    # 绝对动量检查：最强资产动量必须为正
+    if best_momentum > 0:
+        # 相对动量选择：投资最强资产
+        for ticker in ctx.tickers:
+            weights[ticker] = 100 if ticker == best_asset else 0
+        ctx.log(f"🚀 绝对动量为正，全仓 {best_asset}")
+    else:
+        # 负动量：转入避险资产
+        for ticker in ctx.tickers:
+            weights[ticker] = 100 if ticker == safe_asset else 0
+        ctx.log(f"🛡️ 绝对动量为负，转入避险资产 {safe_asset}")
+    
+    ctx.set_target_weights(weights)
+'''
+
+# MACD Trend Strategy
+MACD_STRATEGY_TEMPLATE = '''"""
+MACD 趋势策略
+基于 MACD 金叉死叉和柱状图变化调整仓位。
+"""
+
+def strategy():
+    weights = ctx.get_current_weights()
+    
+    for ticker in ctx.tickers:
+        current_weight = weights.get(ticker, 0)
+        
+        # 获取 MACD 数据
+        macd_data = ctx.macd(ticker)
+        if macd_data.empty or len(macd_data) < 2:
+            continue
+        
+        macd_line = macd_data['macd'].iloc[-1]
+        signal_line = macd_data['signal'].iloc[-1]
+        histogram = macd_data['histogram'].iloc[-1]
+        prev_histogram = macd_data['histogram'].iloc[-2]
+        
+        # MACD 金叉 + 柱状图放大
+        if macd_line > signal_line and histogram > prev_histogram:
+            weights[ticker] = min(current_weight + 15, 50)
+            ctx.log(f"🟢 {ticker} MACD金叉+柱状图扩张，增仓")
+        
+        # MACD 死叉 + 柱状图缩小
+        elif macd_line < signal_line and histogram < prev_histogram:
+            weights[ticker] = max(current_weight - 15, 0)
+            ctx.log(f"🔴 {ticker} MACD死叉+柱状图收缩，减仓")
+        
+        # 零轴上方强势
+        elif macd_line > 0 and signal_line > 0:
+            ctx.log(f"📈 {ticker} MACD零轴上方，维持仓位")
+    
+    ctx.set_target_weights(weights)
+'''
+
+# Bollinger Breakout Strategy
+BOLLINGER_BREAKOUT_TEMPLATE = '''"""
+布林带突破策略 (Bollinger Breakout)
+价格突破上轨做多，跌破下轨减仓，中轨作为趋势参考。
+"""
+
+def strategy():
+    weights = ctx.get_current_weights()
+    
+    # 策略参数
+    bb_period = 20
+    bb_std = 2.0
+    
+    for ticker in ctx.tickers:
+        current_weight = weights.get(ticker, 0)
+        price = ctx.current_price(ticker)
+        
+        # 获取布林带
+        bb = ctx.bollinger(ticker, bb_period, bb_std)
+        if bb.empty:
+            continue
+        
+        upper = bb['upper'].iloc[-1]
+        middle = bb['middle'].iloc[-1]
+        lower = bb['lower'].iloc[-1]
+        
+        # 计算 %B 指标 (价格在布林带中的位置)
+        pct_b = (price - lower) / (upper - lower) if (upper - lower) > 0 else 0.5
+        
+        if price > upper:
+            # 突破上轨：强势信号
+            weights[ticker] = min(current_weight + 10, 40)
+            ctx.log(f"🚀 {ticker} 突破布林上轨 ({price:.2f} > {upper:.2f})")
+        
+        elif price < lower:
+            # 跌破下轨：可能超卖或继续下跌
+            weights[ticker] = max(current_weight - 10, 5)
+            ctx.log(f"⚠️ {ticker} 跌破布林下轨 ({price:.2f} < {lower:.2f})")
+        
+        elif price > middle:
+            # 在中轨上方：偏多
+            ctx.log(f"📊 {ticker} 布林中轨上方，%B={pct_b:.2f}")
+        
+        else:
+            # 在中轨下方：偏空
+            ctx.log(f"📉 {ticker} 布林中轨下方，%B={pct_b:.2f}")
+    
+    ctx.set_target_weights(weights)
+'''
+
+# Yield Curve / Macro Strategy
+YIELD_CURVE_TEMPLATE = '''"""
+收益率曲线策略 (宏观风险策略)
+通过 VIX 和市场状态模拟宏观环境判断。
+高 VIX + 趋势向下 = 类似利率倒挂的风险环境。
+"""
+
+def strategy():
+    weights = ctx.get_current_weights()
+    
+    # 获取 VIX 和市场状态
+    current_vix = ctx.current_vix()
+    vix_series = ctx.vix(20)
+    
+    # VIX 趋势判断
+    vix_ma = vix_series.mean() if not vix_series.empty else 20
+    vix_trending_up = current_vix > vix_ma
+    
+    # 风险等级评估
+    risk_assets = ['IWY', 'LVHI']  # 根据组合调整
+    safe_assets = ['GSD.SI', 'MBH.SI']
+    
+    if current_vix > 30 and vix_trending_up:
+        # 类似衰退预警：大幅减少风险敞口
+        ctx.log(f"🔴 VIX={current_vix:.1f} 且上升趋势，衰退预警模式")
+        for ticker in risk_assets:
+            if ticker in weights:
+                weights[ticker] = weights.get(ticker, 0) * 0.3
+        for ticker in safe_assets:
+            if ticker in weights:
+                weights[ticker] = weights.get(ticker, 0) * 1.5
+    
+    elif current_vix > 20:
+        # 风险环境：谨慎配置
+        ctx.log(f"⚠️ VIX={current_vix:.1f}，谨慎模式")
+        for ticker in risk_assets:
+            if ticker in weights:
+                weights[ticker] = weights.get(ticker, 0) * 0.8
+    
+    else:
+        # 正常/低风险环境
+        ctx.log(f"✅ VIX={current_vix:.1f}，正常配置")
+    
+    ctx.set_target_weights(weights)
+'''
+
+# Tactical Asset Allocation Strategy
+TACTICAL_ALLOCATION_TEMPLATE = '''"""
+动态资产配置策略 (Tactical Asset Allocation)
+综合趋势、动量、波动率多维度信号动态调整。
+"""
+
+def strategy():
+    weights = {}
+    
+    # 基础配置
+    base_allocation = {
+        # 根据您的组合自定义
+        # 'IWY': 30,
+        # 'LVHI': 20,
+        # 'GSD.SI': 25,
+        # 'MBH.SI': 25,
+    }
+    
+    # 如果没有定义，使用等权重
+    if not base_allocation:
+        n = len(ctx.tickers)
+        base_allocation = {t: 100/n for t in ctx.tickers}
+    
+    weights = base_allocation.copy()
+    
+    # 获取市场环境
+    vix = ctx.current_vix()
+    
+    # 信号评分系统
+    for ticker in ctx.tickers:
+        score = 0
+        
+        # 1. 趋势信号 (+/-1)
+        if ctx.price_above_ma(ticker, 200):
+            score += 1
+            ctx.log(f"📈 {ticker}: 趋势向上 +1")
+        else:
+            score -= 1
+            ctx.log(f"📉 {ticker}: 趋势向下 -1")
+        
+        # 2. 动量信号 (+/-1)
+        mom = ctx.momentum(ticker, 20)
+        if not mom.empty:
+            if mom.iloc[-1] > 0:
+                score += 1
+            else:
+                score -= 1
+        
+        # 3. RSI 信号 (+/-1)
+        rsi = ctx.rsi(ticker)
+        if not rsi.empty:
+            current_rsi = rsi.iloc[-1]
+            if 40 < current_rsi < 60:
+                pass  # 中性
+            elif current_rsi < 30:
+                score += 1  # 超卖反弹机会
+            elif current_rsi > 70:
+                score -= 1  # 超买风险
+        
+        # 根据评分调整权重
+        base = weights.get(ticker, 0)
+        adjustment = 1 + (score * 0.15)  # 每分±15%
+        weights[ticker] = max(0, base * adjustment)
+        
+        ctx.log(f"📊 {ticker}: 评分={score}, 权重调整为 {weights[ticker]:.1f}%")
+    
+    # VIX 整体调整
+    if vix > 30:
+        ctx.log(f"⚠️ VIX={vix:.1f}，整体降低风险敞口")
+        weights = {k: v * 0.7 for k, v in weights.items()}
+    
+    ctx.set_target_weights(weights)
+'''
+
+# Seasonal Rotation Strategy
+SEASONAL_ROTATION_TEMPLATE = '''"""
+季节性轮动策略 (Seasonal Rotation)
+基于"Sell in May"等季节性规律调整配置。
+"""
+
+def strategy():
+    weights = ctx.get_current_weights()
+    
+    # 获取当前月份
+    month = ctx.current_date.month
+    
+    risk_assets = [t for t in ctx.tickers]  # 可自定义
+    
+    # 历史统计最佳月份: 11月-4月 (冬季)
+    # 历史统计较弱月份: 5月-10月 (夏季)
+    
+    winter_months = [11, 12, 1, 2, 3, 4]
+    summer_months = [5, 6, 7, 8, 9, 10]
+    
+    if month in winter_months:
+        ctx.log(f"📅 {month}月: 冬季强势期，增加权益配置")
+        for ticker in risk_assets:
+            base = weights.get(ticker, 0)
+            weights[ticker] = min(base * 1.2, 50)
+    
+    elif month in summer_months:
+        ctx.log(f"📅 {month}月: 夏季弱势期，降低权益配置")
+        for ticker in risk_assets:
+            base = weights.get(ticker, 0)
+            weights[ticker] = base * 0.8
+    
+    # 特别注意 9月和10月（历史统计最弱）
+    if month in [9, 10]:
+        ctx.log(f"⚠️ {month}月: 历史统计最弱月份，进一步降低")
+        for ticker in risk_assets:
+            weights[ticker] = weights.get(ticker, 0) * 0.9
+    
+    ctx.set_target_weights(weights)
+'''
+
+# Drawdown Control Strategy
+DRAWDOWN_CONTROL_TEMPLATE = '''"""
+最大回撤控制策略 (Drawdown Control)
+当资产回撤超过阈值时自动减仓。
+"""
+
+def strategy():
+    weights = ctx.get_current_weights()
+    
+    # 策略参数
+    max_drawdown_threshold = 10  # 回撤超过10%触发
+    severe_drawdown = 20         # 严重回撤
+    
+    for ticker in ctx.tickers:
+        current_weight = weights.get(ticker, 0)
+        
+        # 获取回撤数据
+        dd = ctx.drawdown(ticker)
+        if dd.empty:
+            continue
+        
+        current_dd = abs(dd['drawdown'].iloc[-1]) * 100  # 转为百分比
+        
+        if current_dd > severe_drawdown:
+            # 严重回撤：大幅减仓
+            weights[ticker] = max(current_weight * 0.3, 0)
+            ctx.log(f"🔴 {ticker} 严重回撤 {current_dd:.1f}%，大幅减仓")
+        
+        elif current_dd > max_drawdown_threshold:
+            # 中度回撤：适度减仓
+            weights[ticker] = max(current_weight * 0.7, 0)
+            ctx.log(f"⚠️ {ticker} 回撤 {current_dd:.1f}%，减仓")
+        
+        else:
+            ctx.log(f"✅ {ticker} 回撤 {current_dd:.1f}%，在可控范围")
+    
+    ctx.set_target_weights(weights)
+'''
+
+# Multi-Factor Scoring Strategy
+MULTI_FACTOR_TEMPLATE = '''"""
+多因子评分策略 (Multi-Factor Scoring)
+综合动量、波动率、趋势多个因子打分排序。
+"""
+
+def strategy():
+    scores = {}
+    
+    for ticker in ctx.tickers:
+        score = 0
+        
+        # 因子1: 动量 (20日)
+        mom = ctx.momentum(ticker, 20)
+        if not mom.empty:
+            mom_score = mom.iloc[-1]
+            score += mom_score * 2  # 权重2
+        
+        # 因子2: 趋势 (在200日均线上方)
+        if ctx.price_above_ma(ticker, 200):
+            score += 10
+        
+        # 因子3: 波动率 (低波动加分)
+        vol = ctx.volatility(ticker, 20, annualize=True)
+        if not vol.empty:
+            vol_val = vol.iloc[-1]
+            if vol_val < 0.15:
+                score += 5  # 低波动
+            elif vol_val > 0.30:
+                score -= 5  # 高波动
+        
+        # 因子4: RSI (避免极端)
+        rsi = ctx.rsi(ticker)
+        if not rsi.empty:
+            rsi_val = rsi.iloc[-1]
+            if 40 < rsi_val < 60:
+                score += 3  # 健康区间
+        
+        scores[ticker] = score
+        ctx.log(f"📊 {ticker} 综合评分: {score:.1f}")
+    
+    # 根据评分分配权重
+    total_score = sum(max(s, 0) for s in scores.values())
+    weights = {}
+    
+    if total_score > 0:
+        for ticker, score in scores.items():
+            if score > 0:
+                weights[ticker] = (score / total_score) * 100
+            else:
+                weights[ticker] = 0
+    else:
+        # 全部负分，等权分配避险
+        n = len(ctx.tickers)
+        weights = {t: 100/n for t in ctx.tickers}
+        ctx.log("⚠️ 所有资产评分为负，等权配置")
+    
+    ctx.set_target_weights(weights)
+'''
+
 # Strategy templates dictionary
 STRATEGY_TEMPLATES = {
     "均线交叉策略": MA_CROSSOVER_TEMPLATE,
@@ -317,6 +714,14 @@ STRATEGY_TEMPLATES = {
     "趋势跟踪策略": TREND_FOLLOWING_TEMPLATE,
     "风险平价策略": RISK_PARITY_TEMPLATE,
     "定期再平衡策略": REBALANCE_TEMPLATE,
+    "双动量策略": DUAL_MOMENTUM_TEMPLATE,
+    "MACD 趋势策略": MACD_STRATEGY_TEMPLATE,
+    "布林带突破策略": BOLLINGER_BREAKOUT_TEMPLATE,
+    "收益率曲线策略": YIELD_CURVE_TEMPLATE,
+    "动态资产配置策略": TACTICAL_ALLOCATION_TEMPLATE,
+    "季节性轮动策略": SEASONAL_ROTATION_TEMPLATE,
+    "最大回撤控制策略": DRAWDOWN_CONTROL_TEMPLATE,
+    "多因子评分策略": MULTI_FACTOR_TEMPLATE,
 }
 
 # API Documentation for users

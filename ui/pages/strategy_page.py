@@ -44,12 +44,12 @@ def render_strategy_page():
                 # Load and Edit buttons
                 col_load, col_del = st.columns(2)
                 with col_load:
-                    if st.button("📖 加载编辑", use_container_width=True, help="加载策略到编辑器"):
+                    if st.button("📖 加载编辑", width="stretch", help="加载策略到编辑器"):
                         # Force load strategy into editor
                         st.session_state["load_strategy_trigger"] = selected_strategy
                         st.rerun()
                 with col_del:
-                    if st.button("🗑️ 删除", use_container_width=True):
+                    if st.button("🗑️ 删除", width="stretch"):
                         strategy_engine.delete_strategy(selected_strategy)
                         st.success(f"已删除 {selected_strategy}")
                         st.session_state["last_selected_strategy"] = "新建策略"
@@ -157,7 +157,7 @@ def render_strategy_page():
         col_validate, col_test, col_save = st.columns(3)
         
         with col_validate:
-            if st.button("✅ 验证代码", use_container_width=True):
+            if st.button("✅ 验证代码", width="stretch"):
                 result = strategy_engine.validate_strategy(code)
                 
                 if result['valid']:
@@ -172,7 +172,7 @@ def render_strategy_page():
                         st.warning(warn)
         
         with col_test:
-            if st.button("🧪 测试运行", type="primary", use_container_width=True):
+            if st.button("🧪 测试运行", type="primary", width="stretch"):
                 if test_portfolio is None:
                     st.error("请先选择测试组合")
                 else:
@@ -186,7 +186,7 @@ def render_strategy_page():
             # Save button label
             save_label = "💾 更新策略" if is_editing and new_name == editing_name else "💾 保存策略"
             
-            if st.button(save_label, use_container_width=True):
+            if st.button(save_label, width="stretch"):
                 if not new_name:
                     st.error("请输入策略名称")
                 else:
@@ -274,7 +274,7 @@ def run_strategy_test(
                 )
             },
             hide_index=True,
-            use_container_width=True
+            width="stretch"
         )
         
         # Highlight significant changes

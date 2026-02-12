@@ -1,0 +1,23 @@
+{
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "email_from": "DENGHUIYAO@GMAIL.COM",
+    "email_to": "DENGHUIYAO@GMAIL.COM",
+    "email_pwd": "sadj fypn nnbq achp",
+    "serverchan_key": "SCT314191Tnb9bfZEsnT34sAkg1eTaVZfh",
+    "pushplus_token": "",
+    "check_frequency": "daily",
+    "check_time": "09:00",
+    "subscriptions": [
+        {
+            "id": "89e74f25",
+            "strategy_name": "\u52a8\u91cf\u7b56\u75651",
+            "portfolio_name": "op6",
+            "enabled": true,
+            "notify_email": true,
+            "notify_wechat": true,
+            "threshold_pct": 2.5,
+            "created_at": "2026-02-11T16:46:00.574610"
+        }
+    ]
+}

@@ -69,7 +69,7 @@ def render_equity_curve(
         margin=dict(l=60, r=30, t=60, b=50),
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     return fig
 
 
@@ -130,7 +130,7 @@ def render_drawdown_chart(
         margin=dict(l=60, r=30, t=60, b=50),
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     return fig
 
 
@@ -150,8 +150,8 @@ def render_monthly_returns_heatmap(
     Returns:
         Plotly figure
     """
-    # Calculate monthly returns (use 'ME' instead of deprecated 'M')
-    monthly = values.resample('ME').last().pct_change() * 100
+    # Calculate monthly returns
+    monthly = values.resample('M').last().pct_change() * 100
     
     if monthly.empty:
         st.info("Not enough data for monthly analysis")
@@ -168,8 +168,8 @@ def render_monthly_returns_heatmap(
     pivot = monthly_df.pivot_table(index='Year', columns='Month', values='Return')
     pivot = pivot.reindex(columns=month_order)
     
-    # Add yearly total (use 'YE' instead of deprecated 'Y')
-    yearly = values.resample('YE').last().pct_change() * 100
+    # Add yearly total
+    yearly = values.resample('Y').last().pct_change() * 100
     yearly.index = yearly.index.year
     pivot['YTD'] = yearly
     
@@ -196,7 +196,7 @@ def render_monthly_returns_heatmap(
         margin=dict(l=60, r=30, t=80, b=30),
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     return fig
 
 
@@ -247,7 +247,7 @@ def render_correlation_matrix(
         margin=dict(l=80, r=30, t=60, b=80),
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     return fig
 
 
@@ -294,7 +294,7 @@ def render_allocation_pie(
         margin=dict(l=30, r=30, t=60, b=60),
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     return fig
 
 
@@ -317,7 +317,7 @@ def render_trade_history(
     
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         height=height,
         column_config={
             "date": st.column_config.DateColumn("Date"),

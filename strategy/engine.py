@@ -79,6 +79,22 @@ class StrategyContext:
         """Generated signals/messages."""
         return self._signals.copy()
     
+    @property
+    def prices(self) -> pd.DataFrame:
+        """
+        Get price DataFrame for all tickers (shortcut property).
+        Equivalent to ctx.get_prices().
+        """
+        return self.get_prices()
+    
+    @property
+    def price(self) -> pd.DataFrame:
+        """
+        Alias for prices property.
+        Get price DataFrame for all tickers.
+        """
+        return self.get_prices()
+    
     def log(self, message: str):
         """Log a signal or message."""
         self._signals.append(message)

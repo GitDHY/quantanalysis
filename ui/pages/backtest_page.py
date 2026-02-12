@@ -21,6 +21,11 @@ from ui.components.charts import (
     render_metrics_cards,
     render_trade_history,
 )
+from ui.components.data_coverage import (
+    render_data_coverage_banner,
+    render_data_coverage_summary,
+    render_inline_coverage_indicator,
+)
 
 
 def render_backtest_page():
@@ -168,17 +173,66 @@ def render_static_backtest(
         benchmarks = ["无", "SPY (标普500)", "QQQ (纳斯达克)", "60/40 组合"]
         benchmark = st.selectbox("对比基准", benchmarks, key="static_bench")
     
+    # 获取选中的组合以便预检
+    portfolio = portfolio_manager.get(selected_portfolio)
+    
+    if portfolio is None or not portfolio.tickers:
+        st.error("组合无效或没有资产")
+        return
+    
+    # 数据预检功能 - 检查标的成立时间是否早于回测开始时间
+    with st.expander("🔍 数据预检 - 检查标的成立时间", expanded=False):
+        st.caption("检查各标的的成立日期是否早于回测开始日期，确保回测数据有效")
+        if st.button("检查标的成立时间", key="precheck_static"):
+            config = BacktestConfig(
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=initial_capital,
+                rebalance_freq=rebalance_freq,
+                commission_pct=commission_pct,
+                slippage_pct=slippage_pct,
+            )
+            engine = BacktestEngine(config)
+            validation = engine.validate_data_coverage(portfolio.tickers, start_date, end_date)
+            
+            # 存储验证结果
+            st.session_state['static_validation'] = validation
+        
+        # 显示已存储的验证结果
+        if 'static_validation' in st.session_state:
+            validation = st.session_state['static_validation']
+            if not validation.has_warnings:
+                st.success("✅ 所有标的的成立日期均早于回测开始日期，数据完整")
+            else:
+                should_proceed, adjusted_date = render_data_coverage_banner(
+                    validation=validation,
+                    show_details=True,
+                    allow_date_adjustment=True,
+                    key_prefix="static_precheck"
+                )
+                # 如果用户点击了应用日期按钮
+                if adjusted_date:
+                    st.session_state['static_adjusted_start_date'] = adjusted_date
+                    st.rerun()
+    
+    # 检查是否有调整后的开始日期
+    actual_start_date = start_date
+    if 'static_adjusted_start_date' in st.session_state:
+        adjusted = st.session_state['static_adjusted_start_date']
+        if adjusted > start_date:
+            actual_start_date = adjusted
+            st.success(f"📅 已调整开始日期: **{actual_start_date.strftime('%Y-%m-%d')}**（原始: {start_date.strftime('%Y-%m-%d')}）")
+            if st.button("🔄 恢复原始开始日期", key="reset_static_date"):
+                del st.session_state['static_adjusted_start_date']
+                if 'static_validation' in st.session_state:
+                    del st.session_state['static_validation']
+                st.rerun()
+    
     # Run backtest button
     if st.button("🚀 运行回测", type="primary", key="run_static"):
-        portfolio = portfolio_manager.get(selected_portfolio)
-        
-        if portfolio is None or not portfolio.tickers:
-            st.error("组合无效或没有资产")
-            return
-        
-        # Create config
+        # Create config - 使用可能调整后的开始日期
         config = BacktestConfig(
-            start_date=start_date,
+            start_date=actual_start_date,
             end_date=end_date,
             initial_capital=initial_capital,
             rebalance_freq=rebalance_freq,
@@ -198,6 +252,15 @@ def render_static_backtest(
         if not result.success:
             st.error(f"回测失败: {result.message}")
             return
+        
+        # 检查是否有数据警告，如果有则显示
+        if result.has_data_warnings:
+            render_data_coverage_banner(
+                validation=result.data_validation,
+                show_details=True,
+                allow_date_adjustment=False,  # 回测已完成，不允许调整
+                key_prefix="static_result"
+            )
         
         # Get benchmark if selected
         benchmark_values = None
@@ -269,18 +332,66 @@ def render_dynamic_backtest(
     with col_bench2:
         show_weights = st.checkbox("显示仓位变化", value=True, key="show_weights_dynamic")
     
+    # 获取选中的组合以便预检
+    portfolio = portfolio_manager.get(selected_portfolio)
+    strategy = strategy_engine.get(selected_strategy)
+    
+    if portfolio is None or strategy is None:
+        st.error("组合或策略无效")
+        return
+    
+    # 数据预检功能 - 检查标的成立时间是否早于回测开始时间
+    with st.expander("🔍 数据预检 - 检查标的成立时间", expanded=False):
+        st.caption("检查各标的的成立日期是否早于回测开始日期，确保回测数据有效")
+        if st.button("检查标的成立时间", key="precheck_dynamic"):
+            config = BacktestConfig(
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=initial_capital,
+                rebalance_freq=rebalance_freq,
+                commission_pct=commission_pct,
+                slippage_pct=slippage_pct,
+            )
+            engine = BacktestEngine(config)
+            validation = engine.validate_data_coverage(portfolio.tickers, start_date, end_date)
+            
+            st.session_state['dynamic_validation'] = validation
+        
+        # 显示已存储的验证结果
+        if 'dynamic_validation' in st.session_state:
+            validation = st.session_state['dynamic_validation']
+            if not validation.has_warnings:
+                st.success("✅ 所有标的的成立日期均早于回测开始日期，数据完整")
+            else:
+                should_proceed, adjusted_date = render_data_coverage_banner(
+                    validation=validation,
+                    show_details=True,
+                    allow_date_adjustment=True,
+                    key_prefix="dynamic_precheck"
+                )
+                # 如果用户点击了应用日期按钮
+                if adjusted_date:
+                    st.session_state['dynamic_adjusted_start_date'] = adjusted_date
+                    st.rerun()
+    
+    # 检查是否有调整后的开始日期
+    actual_start_date = start_date
+    if 'dynamic_adjusted_start_date' in st.session_state:
+        adjusted = st.session_state['dynamic_adjusted_start_date']
+        if adjusted > start_date:
+            actual_start_date = adjusted
+            st.success(f"📅 已调整开始日期: **{actual_start_date.strftime('%Y-%m-%d')}**（原始: {start_date.strftime('%Y-%m-%d')}）")
+            if st.button("🔄 恢复原始开始日期", key="reset_dynamic_date"):
+                del st.session_state['dynamic_adjusted_start_date']
+                if 'dynamic_validation' in st.session_state:
+                    del st.session_state['dynamic_validation']
+                st.rerun()
+    
     # Run backtest button
     if st.button("🚀 运行策略回测", type="primary", key="run_dynamic"):
-        portfolio = portfolio_manager.get(selected_portfolio)
-        strategy = strategy_engine.get(selected_strategy)
-        
-        if portfolio is None or strategy is None:
-            st.error("组合或策略无效")
-            return
-        
-        # Create config
+        # Create config - 使用可能调整后的开始日期
         config = BacktestConfig(
-            start_date=start_date,
+            start_date=actual_start_date,
             end_date=end_date,
             initial_capital=initial_capital,
             rebalance_freq=rebalance_freq,
@@ -301,6 +412,15 @@ def render_dynamic_backtest(
         if not result.success:
             st.error(f"回测失败: {result.message}")
             return
+        
+        # 检查是否有数据警告
+        if result.has_data_warnings:
+            render_data_coverage_banner(
+                validation=result.data_validation,
+                show_details=True,
+                allow_date_adjustment=False,
+                key_prefix="dynamic_result"
+            )
         
         # Get benchmark
         benchmark_values = None
@@ -794,7 +914,7 @@ def render_multi_equity_curve(all_values: Dict[str, pd.Series]):
         height=500,
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_multi_drawdown_chart(all_results: Dict[str, BacktestResult]):
@@ -839,7 +959,7 @@ def render_multi_drawdown_chart(all_results: Dict[str, BacktestResult]):
         height=400,
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_multi_weights_comparison(all_results: Dict[str, BacktestResult]):
@@ -918,7 +1038,7 @@ def render_multi_weights_comparison(all_results: Dict[str, BacktestResult]):
         height=450,
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # Stats table
     st.write("**📋 仓位统计**")
@@ -950,8 +1070,8 @@ def render_returns_distribution(all_values: Dict[str, pd.Series]):
         if values is None or values.empty:
             continue
         
-        # Calculate monthly returns (use 'ME' instead of deprecated 'M')
-        monthly = values.resample('ME').last().pct_change().dropna() * 100
+        # Calculate monthly returns
+        monthly = values.resample('M').last().pct_change().dropna() * 100
         
         color = colors[i % len(colors)]
         
@@ -969,14 +1089,14 @@ def render_returns_distribution(all_values: Dict[str, pd.Series]):
         height=400,
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # Monthly stats table
     stats_data = []
     for name, values in all_values.items():
         if values is None or values.empty:
             continue
-        monthly = values.resample('ME').last().pct_change().dropna() * 100
+        monthly = values.resample('M').last().pct_change().dropna() * 100
         stats_data.append({
             '策略': name,
             '平均月收益 (%)': round(monthly.mean(), 2),
@@ -1060,7 +1180,7 @@ def render_risk_return_scatter(all_metrics: List[Dict]):
         font=dict(color="green", size=10)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def get_benchmark_values(engine: BacktestEngine, benchmark_name: str, config: BacktestConfig):
@@ -1096,6 +1216,11 @@ def display_backtest_results(result, benchmark_values=None, show_trades=False,
     st.divider()
     st.subheader("📊 回测结果")
     
+    # 如果有数据覆盖信息，显示摘要
+    if result.data_validation is not None and result.has_data_warnings:
+        with st.expander("📋 数据覆盖信息", expanded=False):
+            render_data_coverage_summary(result.data_validation, compact=False)
+    
     # Key metrics
     st.write("**关键指标**")
     render_metrics_cards(result.metrics)
@@ -1106,9 +1231,14 @@ def display_backtest_results(result, benchmark_values=None, show_trades=False,
     
     st.divider()
     
-    # Charts - Add weights tab
-    tabs = ["💰 净值曲线", "📉 回撤分析", "📊 仓位变化", "📅 月度收益", "📋 交易记录"]
-    tab_equity, tab_dd, tab_weights, tab_monthly, tab_trades = st.tabs(tabs)
+    # Charts - Add weights tab and data coverage tab
+    if result.data_validation is not None and result.has_data_warnings:
+        tabs = ["💰 净值曲线", "📉 回撤分析", "📊 仓位变化", "📅 月度收益", "📋 交易记录", "📈 数据覆盖"]
+        tab_equity, tab_dd, tab_weights, tab_monthly, tab_trades, tab_coverage = st.tabs(tabs)
+    else:
+        tabs = ["💰 净值曲线", "📉 回撤分析", "📊 仓位变化", "📅 月度收益", "📋 交易记录"]
+        tab_equity, tab_dd, tab_weights, tab_monthly, tab_trades = st.tabs(tabs)
+        tab_coverage = None
     
     with tab_equity:
         render_equity_curve(
@@ -1152,6 +1282,11 @@ def display_backtest_results(result, benchmark_values=None, show_trades=False,
             st.metric("总交易成本", f"${total_costs:,.2f}")
         else:
             st.info("静态回测无交易记录")
+    
+    # 数据覆盖 tab（如果有警告）
+    if tab_coverage is not None:
+        with tab_coverage:
+            _render_data_coverage_details_tab(result.data_validation)
     
     # Detailed metrics table
     st.divider()
@@ -1517,7 +1652,7 @@ def render_weights_history_chart(weights_history):
         height=450,
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # Also show line chart for better readability
     st.write("**📈 各资产权重走势**")
@@ -1551,7 +1686,7 @@ def render_weights_history_chart(weights_history):
         height=400,
     )
     
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
     
     # Summary statistics
     st.write("**📋 仓位统计**")
@@ -1571,3 +1706,183 @@ def render_weights_history_chart(weights_history):
     
     if stats_data:
         st.dataframe(pd.DataFrame(stats_data), hide_index=True, width="stretch")
+
+
+def _render_data_coverage_details_tab(validation):
+    """
+    渲染数据覆盖详情 Tab 页面。
+    提供完整的数据覆盖分析视图。
+    """
+    if validation is None:
+        st.info("无数据覆盖信息")
+        return
+    
+    import plotly.graph_objects as go
+    from backtest.engine import DataCoverageStatus
+    
+    st.write("**📊 数据覆盖分析**")
+    
+    # 概览指标
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "标的总数",
+            validation.total_tickers_count,
+        )
+    
+    with col2:
+        full_count = len(validation.full_coverage_tickers)
+        st.metric(
+            "✅ 完整覆盖",
+            full_count,
+        )
+    
+    with col3:
+        partial_count = len(validation.partial_tickers)
+        st.metric(
+            "⚠️ 部分覆盖",
+            partial_count,
+        )
+    
+    with col4:
+        excluded_count = len(validation.excluded_tickers)
+        st.metric(
+            "❌ 已排除",
+            excluded_count,
+        )
+    
+    st.divider()
+    
+    # 数据覆盖可视化 - 甘特图样式
+    st.write("**📅 各标的数据时间范围**")
+    
+    # 构建甘特图数据
+    fig = go.Figure()
+    
+    y_labels = []
+    colors_map = {
+        DataCoverageStatus.FULL: '#00CC96',      # 绿色
+        DataCoverageStatus.PARTIAL: '#FFA15A',   # 橙色
+        DataCoverageStatus.NO_DATA: '#EF553B',   # 红色
+    }
+    
+    for i, (ticker, info) in enumerate(validation.coverage_info.items()):
+        y_labels.append(f"{info.get_status_emoji()} {ticker}")
+        
+        color = colors_map.get(info.status, '#636EFA')
+        
+        if info.is_usable and info.actual_start and info.actual_end:
+            # 将 date 转换为字符串
+            start_str = info.actual_start.strftime('%Y-%m-%d')
+            end_str = info.actual_end.strftime('%Y-%m-%d')
+            
+            # 绘制实际数据范围
+            fig.add_trace(go.Bar(
+                x=[(info.actual_end - info.actual_start).days],
+                y=[f"{info.get_status_emoji()} {ticker}"],
+                base=[start_str],
+                orientation='h',
+                name=ticker,
+                marker_color=color,
+                hovertemplate=(
+                    f"<b>{ticker}</b><br>"
+                    f"数据开始: {start_str}<br>"
+                    f"数据结束: {end_str}<br>"
+                    f"覆盖率: {info.coverage_pct:.0f}%"
+                    "<extra></extra>"
+                ),
+                showlegend=False
+            ))
+    
+    # 添加请求的时间范围参考线
+    if validation.coverage_info:
+        first_info = list(validation.coverage_info.values())[0]
+        # 将 date 转换为字符串
+        start_str = first_info.requested_start.strftime('%Y-%m-%d') if first_info.requested_start else None
+        end_str = first_info.requested_end.strftime('%Y-%m-%d') if first_info.requested_end else None
+        
+        # 使用 add_shape 替代 add_vline（避免 annotation 计算问题）
+        if start_str:
+            fig.add_shape(
+                type="line",
+                x0=start_str, x1=start_str,
+                y0=0, y1=1,
+                yref="paper",
+                line=dict(color="blue", width=2, dash="dash"),
+            )
+            fig.add_annotation(
+                x=start_str,
+                y=1.05,
+                yref="paper",
+                text="回测开始",
+                showarrow=False,
+                font=dict(color="blue", size=10),
+            )
+        if end_str:
+            fig.add_shape(
+                type="line",
+                x0=end_str, x1=end_str,
+                y0=0, y1=1,
+                yref="paper",
+                line=dict(color="blue", width=2, dash="dash"),
+            )
+            fig.add_annotation(
+                x=end_str,
+                y=1.05,
+                yref="paper",
+                text="回测结束",
+                showarrow=False,
+                font=dict(color="blue", size=10),
+            )
+    
+    fig.update_layout(
+        title="各标的数据覆盖时间范围",
+        xaxis_title="日期",
+        yaxis_title="标的",
+        height=max(300, len(validation.coverage_info) * 40),
+        barmode='overlay',
+    )
+    
+    st.plotly_chart(fig, width="stretch")
+    
+    st.divider()
+    
+    # 详细数据表格
+    st.write("**📋 详细数据覆盖信息**")
+    
+    table_data = []
+    for ticker, info in validation.coverage_info.items():
+        row = {
+            '状态': info.get_status_emoji(),
+            '标的': ticker,
+            '覆盖状态': info.get_status_label(),
+            '请求开始日期': info.requested_start.strftime('%Y-%m-%d'),
+            '请求结束日期': info.requested_end.strftime('%Y-%m-%d'),
+            '实际开始日期': info.actual_start.strftime('%Y-%m-%d') if info.actual_start else '无数据',
+            '实际结束日期': info.actual_end.strftime('%Y-%m-%d') if info.actual_end else '无数据',
+            '覆盖率': f"{info.coverage_pct:.0f}%" if info.is_usable else '-',
+            '延迟天数': f"+{info.missing_start_days}天" if info.missing_start_days > 0 else '-',
+            '可用交易日': info.trading_days_available if info.is_usable else 0,
+        }
+        table_data.append(row)
+    
+    df = pd.DataFrame(table_data)
+    
+    st.dataframe(
+        df,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            '状态': st.column_config.TextColumn(width="small"),
+            '标的': st.column_config.TextColumn(width="medium"),
+        }
+    )
+    
+    # 建议
+    if validation.effective_start_date and validation.has_partial_tickers:
+        st.divider()
+        st.info(
+            f"💡 **建议**: 如果希望所有标的都有完整数据覆盖，"
+            f"可将回测开始日期调整为 **{validation.effective_start_date.strftime('%Y-%m-%d')}**"
+        )

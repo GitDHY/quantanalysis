@@ -24,6 +24,127 @@ class RebalanceFrequency(Enum):
     QUARTERLY = "quarterly"
 
 
+class DataCoverageStatus(Enum):
+    """Data coverage status for a ticker."""
+    FULL = "full"           # 完全覆盖
+    PARTIAL = "partial"     # 部分覆盖（数据开始时间晚于回测开始时间）
+    NO_DATA = "no_data"     # 无数据
+
+
+@dataclass
+class TickerCoverageInfo:
+    """Data coverage information for a single ticker."""
+    ticker: str
+    status: DataCoverageStatus
+    requested_start: date
+    requested_end: date
+    actual_start: Optional[date] = None
+    actual_end: Optional[date] = None
+    coverage_pct: float = 0.0
+    missing_start_days: int = 0  # 开始日期前缺失的天数
+    missing_end_days: int = 0    # 结束日期后缺失的天数
+    trading_days_available: int = 0
+    trading_days_requested: int = 0
+    
+    @property
+    def has_full_coverage(self) -> bool:
+        return self.status == DataCoverageStatus.FULL
+    
+    @property
+    def is_usable(self) -> bool:
+        return self.status != DataCoverageStatus.NO_DATA
+    
+    def get_status_emoji(self) -> str:
+        if self.status == DataCoverageStatus.FULL:
+            return "✅"
+        elif self.status == DataCoverageStatus.PARTIAL:
+            return "⚠️"
+        else:
+            return "❌"
+    
+    def get_status_label(self) -> str:
+        if self.status == DataCoverageStatus.FULL:
+            return "完整"
+        elif self.status == DataCoverageStatus.PARTIAL:
+            return "部分"
+        else:
+            return "无数据"
+    
+    def to_dict(self) -> dict:
+        return {
+            'ticker': self.ticker,
+            'status': self.status.value,
+            'requested_start': self.requested_start.isoformat() if self.requested_start else None,
+            'requested_end': self.requested_end.isoformat() if self.requested_end else None,
+            'actual_start': self.actual_start.isoformat() if self.actual_start else None,
+            'actual_end': self.actual_end.isoformat() if self.actual_end else None,
+            'coverage_pct': self.coverage_pct,
+            'missing_start_days': self.missing_start_days,
+            'trading_days_available': self.trading_days_available,
+        }
+
+
+@dataclass 
+class DataValidationResult:
+    """Result of data coverage validation."""
+    is_valid: bool                              # 是否可以进行回测
+    has_warnings: bool                          # 是否有警告
+    all_tickers_have_full_coverage: bool        # 所有标的是否都有完整数据
+    coverage_info: Dict[str, TickerCoverageInfo]  # 每个标的的覆盖信息
+    effective_start_date: Optional[date]        # 所有可用标的的共同开始日期
+    effective_end_date: Optional[date]          # 所有可用标的的共同结束日期
+    excluded_tickers: List[str]                 # 完全被排除的标的（无数据）
+    partial_tickers: List[str]                  # 部分覆盖的标的
+    full_coverage_tickers: List[str]            # 完全覆盖的标的
+    warnings: List[str]                         # 警告消息列表
+    
+    @property
+    def usable_tickers_count(self) -> int:
+        return len(self.partial_tickers) + len(self.full_coverage_tickers)
+    
+    @property
+    def total_tickers_count(self) -> int:
+        return len(self.coverage_info)
+    
+    @property
+    def has_excluded_tickers(self) -> bool:
+        return len(self.excluded_tickers) > 0
+    
+    @property
+    def has_partial_tickers(self) -> bool:
+        return len(self.partial_tickers) > 0
+    
+    def get_severity_level(self) -> str:
+        """
+        获取警告严重程度：
+        - 'success': 所有数据完整
+        - 'warning': 有部分覆盖但可用
+        - 'error': 有标的完全无数据
+        - 'critical': 没有可用标的
+        """
+        if not self.is_valid:
+            return 'critical'
+        elif self.has_excluded_tickers:
+            return 'error'
+        elif self.has_partial_tickers:
+            return 'warning'
+        else:
+            return 'success'
+    
+    def to_dict(self) -> dict:
+        return {
+            'is_valid': self.is_valid,
+            'has_warnings': self.has_warnings,
+            'effective_start_date': self.effective_start_date.isoformat() if self.effective_start_date else None,
+            'effective_end_date': self.effective_end_date.isoformat() if self.effective_end_date else None,
+            'excluded_tickers': self.excluded_tickers,
+            'partial_tickers': self.partial_tickers,
+            'full_coverage_tickers': self.full_coverage_tickers,
+            'warnings': self.warnings,
+            'coverage_info': {k: v.to_dict() for k, v in self.coverage_info.items()},
+        }
+
+
 @dataclass
 class BacktestConfig:
     """Configuration for backtesting."""
@@ -77,12 +198,28 @@ class BacktestResult:
     config: BacktestConfig
     success: bool = True
     message: str = ""
+    # 数据覆盖相关字段
+    data_validation: Optional[DataValidationResult] = None
+    effective_start_date: Optional[date] = None
+    effective_end_date: Optional[date] = None
     
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame."""
         if not self.trades:
             return pd.DataFrame()
         return pd.DataFrame([t.to_dict() for t in self.trades])
+    
+    @property
+    def has_data_warnings(self) -> bool:
+        """Check if there are any data coverage warnings."""
+        return self.data_validation is not None and self.data_validation.has_warnings
+    
+    @property
+    def data_warnings(self) -> List[str]:
+        """Get data coverage warnings."""
+        if self.data_validation is None:
+            return []
+        return self.data_validation.warnings
 
 
 class BacktestEngine:
@@ -112,6 +249,185 @@ class BacktestEngine:
         # Initialize metrics calculator
         metrics_config = MetricsConfig(risk_free_rate=self.config.risk_free_rate)
         self.metrics = PerformanceMetrics(metrics_config)
+    
+    def validate_data_coverage(
+        self,
+        tickers: List[str],
+        start_date: date,
+        end_date: date
+    ) -> DataValidationResult:
+        """
+        验证标的在指定时间范围内的数据覆盖情况。
+        
+        这个方法会预先检查数据可用性，用于在回测执行前向用户显示警告。
+        **重要**: 使用标的的真实成立日期（通过获取完整历史数据确定），而非仅依赖回测期间的数据。
+        
+        Args:
+            tickers: 标的列表
+            start_date: 回测开始日期
+            end_date: 回测结束日期
+            
+        Returns:
+            DataValidationResult: 包含每个标的的详细覆盖信息
+        """
+        warnings = []
+        coverage_info = {}
+        excluded_tickers = []
+        partial_tickers = []
+        full_coverage_tickers = []
+        
+        effective_start = None
+        effective_end = None
+        
+        requested_days = (end_date - start_date).days
+        
+        # 获取所有标的的真实成立日期
+        inception_dates = self.data_fetcher.get_tickers_inception_dates(tickers)
+        
+        # 获取回测期间的价格数据（用于计算覆盖率）
+        prices = self.data_fetcher.fetch_prices(
+            tickers,
+            start_date=start_date.strftime('%Y-%m-%d'),
+            end_date=end_date.strftime('%Y-%m-%d'),
+        )
+        
+        for ticker in tickers:
+            inception_date = inception_dates.get(ticker)
+            
+            # 如果无法获取成立日期，标记为无数据
+            if inception_date is None:
+                info = TickerCoverageInfo(
+                    ticker=ticker,
+                    status=DataCoverageStatus.NO_DATA,
+                    requested_start=start_date,
+                    requested_end=end_date,
+                    coverage_pct=0.0,
+                    missing_start_days=requested_days,
+                )
+                coverage_info[ticker] = info
+                excluded_tickers.append(ticker)
+                warnings.append(f"❌ {ticker}: 无法获取成立日期，该标的将被排除")
+                continue
+            
+            # 转换为 date 类型
+            actual_start = inception_date.date() if hasattr(inception_date, 'date') else inception_date
+            
+            # 检查回测期间是否有数据
+            has_price_data = not prices.empty and ticker in prices.columns
+            if has_price_data:
+                ticker_data = prices[ticker].dropna()
+                has_price_data = not ticker_data.empty
+            
+            if not has_price_data:
+                # 成立日期在回测结束日期之后
+                if actual_start > end_date:
+                    info = TickerCoverageInfo(
+                        ticker=ticker,
+                        status=DataCoverageStatus.NO_DATA,
+                        requested_start=start_date,
+                        requested_end=end_date,
+                        actual_start=actual_start,
+                        coverage_pct=0.0,
+                        missing_start_days=(actual_start - start_date).days,
+                    )
+                    coverage_info[ticker] = info
+                    excluded_tickers.append(ticker)
+                    warnings.append(f"❌ {ticker}: 成立于 {actual_start.strftime('%Y-%m-%d')}，晚于回测结束日期")
+                    continue
+                else:
+                    info = TickerCoverageInfo(
+                        ticker=ticker,
+                        status=DataCoverageStatus.NO_DATA,
+                        requested_start=start_date,
+                        requested_end=end_date,
+                        actual_start=actual_start,
+                        coverage_pct=0.0,
+                        missing_start_days=requested_days,
+                    )
+                    coverage_info[ticker] = info
+                    excluded_tickers.append(ticker)
+                    warnings.append(f"❌ {ticker}: 在回测期间无法获取数据")
+                    continue
+            
+            # 计算回测期间的数据范围
+            ticker_data = prices[ticker].dropna()
+            data_start_in_period = ticker_data.index[0].date() if hasattr(ticker_data.index[0], 'date') else ticker_data.index[0]
+            actual_end = ticker_data.index[-1].date() if hasattr(ticker_data.index[-1], 'date') else ticker_data.index[-1]
+            
+            # 计算覆盖率
+            trading_days_available = len(ticker_data)
+            trading_days_total = len(prices)
+            coverage_pct = (trading_days_available / max(trading_days_total, 1)) * 100
+            
+            # 计算缺失天数（基于真实成立日期）
+            missing_start_days = max(0, (actual_start - start_date).days)
+            missing_end_days = max(0, (end_date - actual_end).days)
+            
+            # 判断覆盖状态
+            # 主要判断：成立日期是否早于或等于回测开始日期
+            # 结束日期的判断要考虑数据更新延迟（如果 actual_end 接近 end_date 或在合理范围内就算完整）
+            start_ok = actual_start <= start_date
+            # 允许结束日期有几天的误差（数据更新延迟）或者回测结束日期在未来
+            end_ok = actual_end >= end_date or (end_date - actual_end).days <= 5
+            
+            if start_ok and end_ok:
+                status = DataCoverageStatus.FULL
+            else:
+                status = DataCoverageStatus.PARTIAL
+            
+            info = TickerCoverageInfo(
+                ticker=ticker,
+                status=status,
+                requested_start=start_date,
+                requested_end=end_date,
+                actual_start=actual_start,  # 真实成立日期
+                actual_end=actual_end,
+                coverage_pct=min(coverage_pct, 100),
+                missing_start_days=missing_start_days,
+                missing_end_days=missing_end_days,
+                trading_days_available=trading_days_available,
+                trading_days_requested=trading_days_total,
+            )
+            coverage_info[ticker] = info
+            
+            # 分类标的
+            if status == DataCoverageStatus.FULL:
+                full_coverage_tickers.append(ticker)
+            else:
+                partial_tickers.append(ticker)
+                # 生成警告消息
+                if missing_start_days > 0:
+                    warnings.append(
+                        f"⚠️ {ticker}: 成立于 {actual_start.strftime('%Y-%m-%d')}，"
+                        f"比回测开始日期晚 {missing_start_days} 天"
+                    )
+            
+            # 更新有效日期范围
+            # effective_start 应该是所有标的中最晚的成立日期（确保所有标的都有数据）
+            if effective_start is None or actual_start > effective_start:
+                effective_start = actual_start
+            if effective_end is None or actual_end < effective_end:
+                effective_end = actual_end
+        
+        # 判断是否可以进行回测
+        usable_count = len(partial_tickers) + len(full_coverage_tickers)
+        is_valid = usable_count > 0
+        
+        has_warnings = len(warnings) > 0
+        all_full_coverage = len(excluded_tickers) == 0 and len(partial_tickers) == 0
+        
+        return DataValidationResult(
+            is_valid=is_valid,
+            has_warnings=has_warnings,
+            all_tickers_have_full_coverage=all_full_coverage,
+            coverage_info=coverage_info,
+            effective_start_date=effective_start,
+            effective_end_date=effective_end,
+            excluded_tickers=excluded_tickers,
+            partial_tickers=partial_tickers,
+            full_coverage_tickers=full_coverage_tickers,
+            warnings=warnings,
+        )
     
     def _get_rebalance_dates(self, dates: pd.DatetimeIndex) -> List[pd.Timestamp]:
         """
@@ -183,6 +499,9 @@ class BacktestEngine:
         
         norm_weights = {t: w / total_weight for t, w in weights.items()}
         
+        # 先进行数据验证
+        data_validation = self.validate_data_coverage(tickers, cfg.start_date, cfg.end_date)
+        
         # Fetch price data
         prices = self.data_fetcher.fetch_prices(
             tickers,
@@ -200,6 +519,7 @@ class BacktestEngine:
                 config=cfg,
                 success=False,
                 message="No price data available",
+                data_validation=data_validation,
             )
         
         # Filter to available tickers
@@ -214,6 +534,7 @@ class BacktestEngine:
                 config=cfg,
                 success=False,
                 message="No valid tickers found",
+                data_validation=data_validation,
             )
         
         # Recalculate weights for available tickers
@@ -246,6 +567,10 @@ class BacktestEngine:
         # No trades in static backtest (buy and hold)
         trades = []
         
+        # 计算实际有效的开始和结束日期
+        effective_start = data_validation.effective_start_date
+        effective_end = data_validation.effective_end_date
+        
         return BacktestResult(
             portfolio_values=portfolio_value,
             trades=trades,
@@ -254,6 +579,9 @@ class BacktestEngine:
             weights_history=weights_history,
             config=cfg,
             success=True,
+            data_validation=data_validation,
+            effective_start_date=effective_start,
+            effective_end_date=effective_end,
         )
     
     def run_dynamic(
@@ -284,6 +612,9 @@ class BacktestEngine:
         else:
             norm_weights = {t: (w / total_weight) * 100 for t, w in initial_weights.items()}
         
+        # 先进行数据验证
+        data_validation = self.validate_data_coverage(tickers, cfg.start_date, cfg.end_date)
+        
         # Fetch price data (with extra lookback for indicators)
         lookback_start = cfg.start_date - timedelta(days=300)
         
@@ -303,6 +634,7 @@ class BacktestEngine:
                 config=cfg,
                 success=False,
                 message="No price data available",
+                data_validation=data_validation,
             )
         
         # Filter to backtest period
@@ -318,6 +650,7 @@ class BacktestEngine:
                 config=cfg,
                 success=False,
                 message="No data in backtest period",
+                data_validation=data_validation,
             )
         
         # Filter to available tickers
@@ -332,6 +665,7 @@ class BacktestEngine:
                 config=cfg,
                 success=False,
                 message="No valid tickers found",
+                data_validation=data_validation,
             )
         
         # Get rebalancing dates
@@ -500,6 +834,10 @@ class BacktestEngine:
         # Calculate drawdown
         drawdown = self.metrics.drawdown_series(portfolio_series)
         
+        # 计算实际有效的开始和结束日期
+        effective_start = data_validation.effective_start_date
+        effective_end = data_validation.effective_end_date
+        
         return BacktestResult(
             portfolio_values=portfolio_series,
             trades=trades,
@@ -508,6 +846,9 @@ class BacktestEngine:
             weights_history=weights_df,
             config=cfg,
             success=True,
+            data_validation=data_validation,
+            effective_start_date=effective_start,
+            effective_end_date=effective_end,
         )
     
     def run_with_code(

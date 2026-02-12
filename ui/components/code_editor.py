@@ -148,7 +148,7 @@ def render_code_editor_with_toolbar(
         )
     
     with col4:
-        if st.button("🗑️ 清空", key=f"{key}_clear", use_container_width=True):
+        if st.button("🗑️ 清空", key=f"{key}_clear", width="stretch"):
             st.session_state[state_key] = ""
             # Increment version to force editor re-render
             st.session_state[editor_version_key] += 1

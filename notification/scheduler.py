@@ -1,5 +1,6 @@
 """
 Alert scheduler module for periodic strategy checks.
+Supports automatic subscription-based strategy monitoring.
 """
 
 import json
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 
-from config.settings import get_settings
+from config.settings import get_settings, NotificationSubscription
 
 
 @dataclass
@@ -39,6 +40,25 @@ class ScheduleConfig:
             return True
         
         return False
+
+
+@dataclass  
+class CheckResult:
+    """Result of a single subscription check."""
+    subscription_id: str
+    strategy_name: str
+    portfolio_name: str
+    success: bool
+    has_changes: bool
+    changes_count: int
+    email_sent: bool
+    wechat_sent: bool
+    error: str = ""
+    signals: List[str] = None
+    
+    def __post_init__(self):
+        if self.signals is None:
+            self.signals = []
 
 
 class AlertScheduler:
@@ -171,14 +191,19 @@ class AlertScheduler:
                 config = self.load_config()
                 
                 if config.should_run_now():
-                    # Run checks
-                    results = self._run_checks()
+                    # Run subscription checks
+                    results = self.run_subscription_checks()
+                    
+                    # Also run any custom callbacks
+                    callback_results = self._run_checks()
                     
                     # Update last run
                     self.update_last_run()
                     
-                    # Log results (you could also save to file)
-                    print(f"Scheduler ran at {results['timestamp']}")
+                    # Log results
+                    print(f"Scheduler ran at {datetime.now().isoformat()}")
+                    print(f"  Subscriptions checked: {len(results)}")
+                    print(f"  With changes: {sum(1 for r in results if r.has_changes)}")
                 
             except Exception as e:
                 print(f"Scheduler error: {e}")
@@ -246,3 +271,153 @@ class AlertScheduler:
             'last_run': config.last_run,
             'callbacks_count': len(self._check_callbacks),
         }
+    
+    def run_subscription_checks(self) -> List[CheckResult]:
+        """
+        Run all enabled subscription checks.
+        This is the main method for scheduled strategy checks.
+        
+        Returns:
+            List of CheckResult for each subscription
+        """
+        from strategy.engine import StrategyEngine
+        from portfolio.manager import PortfolioManager
+        from notification.email_sender import EmailSender
+        from notification.wechat_push import WeChatPush
+        
+        results: List[CheckResult] = []
+        
+        # Load notification config with subscriptions
+        notification_config = self.settings.load_notification_config()
+        
+        # Filter to only enabled subscriptions
+        active_subs = [s for s in notification_config.subscriptions if s.enabled]
+        
+        if not active_subs:
+            return results
+        
+        # Initialize engines
+        strategy_engine = StrategyEngine()
+        portfolio_manager = PortfolioManager()
+        email_sender = EmailSender(notification_config)
+        wechat_push = WeChatPush(notification_config)
+        
+        for sub in active_subs:
+            result = self._check_single_subscription(
+                sub,
+                strategy_engine,
+                portfolio_manager,
+                email_sender,
+                wechat_push,
+                notification_config,
+            )
+            results.append(result)
+        
+        return results
+    
+    def _check_single_subscription(
+        self,
+        subscription: NotificationSubscription,
+        strategy_engine,
+        portfolio_manager,
+        email_sender,
+        wechat_push,
+        notification_config,
+    ) -> CheckResult:
+        """
+        Check a single subscription and send notifications if needed.
+        
+        Args:
+            subscription: The subscription to check
+            strategy_engine: StrategyEngine instance
+            portfolio_manager: PortfolioManager instance
+            email_sender: EmailSender instance
+            wechat_push: WeChatPush instance
+            notification_config: NotificationDefaults config
+            
+        Returns:
+            CheckResult with the outcome
+        """
+        result = CheckResult(
+            subscription_id=subscription.id,
+            strategy_name=subscription.strategy_name,
+            portfolio_name=subscription.portfolio_name,
+            success=False,
+            has_changes=False,
+            changes_count=0,
+            email_sent=False,
+            wechat_sent=False,
+        )
+        
+        try:
+            # Get strategy and portfolio
+            strategy = strategy_engine.get(subscription.strategy_name)
+            portfolio = portfolio_manager.get(subscription.portfolio_name)
+            
+            if not strategy:
+                result.error = f"Strategy '{subscription.strategy_name}' not found"
+                return result
+            
+            if not portfolio:
+                result.error = f"Portfolio '{subscription.portfolio_name}' not found"
+                return result
+            
+            # Execute strategy
+            exec_result = strategy_engine.execute(
+                code=strategy['code'],
+                tickers=portfolio.tickers,
+                current_weights=portfolio.weights,
+            )
+            
+            if not exec_result.success:
+                result.error = exec_result.message
+                return result
+            
+            result.success = True
+            result.signals = exec_result.signals
+            
+            # Check for significant changes
+            changes = []
+            current_weights = portfolio.weights
+            target_weights = exec_result.target_weights
+            
+            for ticker in set(list(current_weights.keys()) + list(target_weights.keys())):
+                current = current_weights.get(ticker, 0)
+                target = target_weights.get(ticker, 0)
+                change = abs(target - current)
+                
+                if change >= subscription.threshold_pct:
+                    changes.append(ticker)
+            
+            result.changes_count = len(changes)
+            result.has_changes = len(changes) > 0
+            
+            # Send notifications if there are changes
+            if result.has_changes:
+                reason = "\n".join(exec_result.signals[:5]) if exec_result.signals else "策略信号触发"
+                
+                # Send email
+                if subscription.notify_email and email_sender.is_configured():
+                    email_result = email_sender.send_strategy_alert(
+                        strategy_name=subscription.strategy_name,
+                        current_weights=current_weights,
+                        target_weights=target_weights,
+                        reason=reason,
+                    )
+                    result.email_sent = email_result.success
+                
+                # Send WeChat
+                if subscription.notify_wechat and wechat_push.is_configured():
+                    wechat_result = wechat_push.send_strategy_alert(
+                        strategy_name=subscription.strategy_name,
+                        current_weights=current_weights,
+                        target_weights=target_weights,
+                        reason=reason,
+                    )
+                    result.wechat_sent = wechat_result.success
+            
+            return result
+            
+        except Exception as e:
+            result.error = str(e)
+            return result

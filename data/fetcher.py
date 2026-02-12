@@ -266,6 +266,81 @@ class DataFetcher:
                 f.unlink()
             except Exception:
                 pass
+    
+    def get_ticker_inception_date(self, ticker: str) -> Optional[datetime]:
+        """
+        获取单个标的的真实成立日期（第一条历史数据的日期）。
+        
+        通过获取标的的全部历史数据来确定其成立日期。
+        结果会被缓存以避免重复请求。
+        
+        Args:
+            ticker: 标的代码
+            
+        Returns:
+            成立日期，如果无法获取则返回 None
+        """
+        # 缓存文件路径
+        cache_path = self.cache_dir / f"inception_{ticker.replace('^', '_').replace('/', '_')}.json"
+        
+        # 检查缓存
+        if cache_path.exists():
+            try:
+                mtime = datetime.fromtimestamp(cache_path.stat().st_mtime)
+                # 成立日期缓存有效期为30天（因为成立日期不会变）
+                if (datetime.now() - mtime).days < 30:
+                    with open(cache_path, 'r') as f:
+                        data = json.load(f)
+                        if data.get('inception_date'):
+                            return datetime.strptime(data['inception_date'], '%Y-%m-%d')
+                        return None
+            except Exception:
+                pass
+        
+        # 从 yfinance 获取完整历史数据
+        try:
+            tk = yf.Ticker(ticker)
+            # 使用 period='max' 获取所有可用历史数据
+            hist = tk.history(period='max')
+            
+            if hist is None or hist.empty:
+                # 缓存空结果
+                with open(cache_path, 'w') as f:
+                    json.dump({'inception_date': None, 'ticker': ticker}, f)
+                return None
+            
+            # 第一条数据的日期就是成立日期
+            inception_date = hist.index[0]
+            if hasattr(inception_date, 'date'):
+                inception_date = inception_date.to_pydatetime()
+            
+            # 缓存结果
+            with open(cache_path, 'w') as f:
+                json.dump({
+                    'inception_date': inception_date.strftime('%Y-%m-%d'),
+                    'ticker': ticker
+                }, f)
+            
+            return inception_date
+            
+        except Exception as e:
+            print(f"Error getting inception date for {ticker}: {e}")
+            return None
+    
+    def get_tickers_inception_dates(self, tickers: List[str]) -> Dict[str, Optional[datetime]]:
+        """
+        批量获取多个标的的成立日期。
+        
+        Args:
+            tickers: 标的代码列表
+            
+        Returns:
+            Dict[ticker, inception_date]
+        """
+        result = {}
+        for ticker in tickers:
+            result[ticker] = self.get_ticker_inception_date(ticker)
+        return result
 
 
 # Singleton instance

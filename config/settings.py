@@ -5,7 +5,7 @@ Global settings and configuration management for Quant Platform.
 import os
 import json
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
 
@@ -18,6 +18,44 @@ class BacktestDefaults:
     commission_pct: float = 0.001     # Percentage commission (0.1%)
     slippage_pct: float = 0.001       # Slippage (0.1%)
     risk_free_rate: float = 0.03      # Annual risk-free rate (3%)
+
+
+@dataclass
+class NotificationSubscription:
+    """A notification subscription for a strategy-portfolio pair."""
+    id: str                          # Unique subscription ID
+    strategy_name: str               # Strategy to monitor
+    portfolio_name: str              # Portfolio to use
+    enabled: bool = True             # Is this subscription active
+    notify_email: bool = True        # Send email notifications
+    notify_wechat: bool = True       # Send WeChat notifications
+    threshold_pct: float = 1.0       # Minimum weight change % to trigger notification
+    created_at: str = ""
+    
+    def to_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'strategy_name': self.strategy_name,
+            'portfolio_name': self.portfolio_name,
+            'enabled': self.enabled,
+            'notify_email': self.notify_email,
+            'notify_wechat': self.notify_wechat,
+            'threshold_pct': self.threshold_pct,
+            'created_at': self.created_at,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'NotificationSubscription':
+        return cls(
+            id=data.get('id', ''),
+            strategy_name=data.get('strategy_name', ''),
+            portfolio_name=data.get('portfolio_name', ''),
+            enabled=data.get('enabled', True),
+            notify_email=data.get('notify_email', True),
+            notify_wechat=data.get('notify_wechat', True),
+            threshold_pct=data.get('threshold_pct', 1.0),
+            created_at=data.get('created_at', ''),
+        )
 
 
 @dataclass
@@ -37,6 +75,9 @@ class NotificationDefaults:
     # Scheduling
     check_frequency: str = "daily"  # daily, weekly
     check_time: str = "09:30"
+    
+    # Subscriptions
+    subscriptions: List['NotificationSubscription'] = field(default_factory=list)
 
 
 @dataclass
@@ -112,6 +153,12 @@ class Settings:
                     config.pushplus_token = data.get('pushplus_token', config.pushplus_token)
                     config.check_frequency = data.get('check_frequency', config.check_frequency)
                     config.check_time = data.get('check_time', config.check_time)
+                    
+                    # Load subscriptions
+                    subscriptions_data = data.get('subscriptions', [])
+                    config.subscriptions = [
+                        NotificationSubscription.from_dict(s) for s in subscriptions_data
+                    ]
                 return config
             except Exception:
                 pass
@@ -150,6 +197,7 @@ class Settings:
                 'pushplus_token': config.pushplus_token,
                 'check_frequency': config.check_frequency,
                 'check_time': config.check_time,
+                'subscriptions': [s.to_dict() for s in config.subscriptions],
             }
             with open(self.notification_config_file, 'w') as f:
                 json.dump(data, f, indent=4)

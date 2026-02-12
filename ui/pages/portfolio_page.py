@@ -178,11 +178,11 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
     with col_add3:
         st.write("")  # Spacing
         st.write("")
-        validate_clicked = st.button("🔍 验证", use_container_width=True, key="validate_ticker_btn")
+        validate_clicked = st.button("🔍 验证", width="stretch", key="validate_ticker_btn")
     with col_add4:
         st.write("")  # Spacing
         st.write("")
-        add_clicked = st.button("➕ 添加", use_container_width=True, key="add_ticker_btn")
+        add_clicked = st.button("➕ 添加", width="stretch", key="add_ticker_btn")
     
     # Validation logic
     if validate_clicked and new_ticker:
@@ -243,7 +243,7 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
                 ),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key="weights_editor"
         )
         
@@ -253,7 +253,7 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
         for i, ticker in enumerate(portfolio.tickers):
             col_idx = i % 6
             with cols[col_idx]:
-                if st.button(f"🗑️ {ticker}", key=f"del_{ticker}", use_container_width=True):
+                if st.button(f"🗑️ {ticker}", key=f"del_{ticker}", width="stretch"):
                     portfolio.tickers.remove(ticker)
                     if ticker in portfolio.weights:
                         del portfolio.weights[ticker]
@@ -285,7 +285,7 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
     col_save, col_delete, col_rename = st.columns(3)
     
     with col_save:
-        if st.button("💾 保存修改", type="primary", use_container_width=True):
+        if st.button("💾 保存修改", type="primary", width="stretch"):
             # Update weights from editor
             for _, row in edited_df.iterrows():
                 portfolio.weights[row["标的"]] = row["权重 (%)"]
@@ -298,14 +298,14 @@ def render_portfolio_editor(manager: PortfolioManager, portfolio_name: str):
                 st.error("保存失败")
     
     with col_delete:
-        if st.button("🗑️ 删除组合", type="secondary", use_container_width=True):
+        if st.button("🗑️ 删除组合", type="secondary", width="stretch"):
             if manager.delete(portfolio_name):
                 st.success("已删除")
                 st.rerun()
     
     with col_rename:
         if new_name != portfolio_name:
-            if st.button("✏️ 重命名", use_container_width=True):
+            if st.button("✏️ 重命名", width="stretch"):
                 if manager.rename(portfolio_name, new_name):
                     st.success(f"已重命名为 {new_name}")
                     st.rerun()
@@ -328,17 +328,17 @@ def render_portfolio_creator(manager: PortfolioManager):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("🇺🇸 美股成长", use_container_width=True):
+        if st.button("🇺🇸 美股成长", width="stretch"):
             st.session_state['template_tickers'] = "IWY, QQQ, SPY"
             st.session_state['template_weights'] = "50, 30, 20"
     
     with col2:
-        if st.button("🌏 全球分散", use_container_width=True):
+        if st.button("🌏 全球分散", width="stretch"):
             st.session_state['template_tickers'] = "IWY, LVHI, G3B.SI, GSD.SI"
             st.session_state['template_weights'] = "40, 20, 20, 20"
     
     with col3:
-        if st.button("🛡️ 保守型", use_container_width=True):
+        if st.button("🛡️ 保守型", width="stretch"):
             st.session_state['template_tickers'] = "LVHI, MBH.SI, GSD.SI"
             st.session_state['template_weights'] = "40, 40, 20"
     
@@ -378,7 +378,7 @@ def render_portfolio_creator(manager: PortfolioManager):
                     "权重 (%)": weights
                 })
                 
-                st.dataframe(preview_df, hide_index=True, use_container_width=True)
+                st.dataframe(preview_df, hide_index=True, width="stretch")
                 
                 total = sum(weights)
                 if abs(total - 100) > 0.1:
@@ -408,7 +408,7 @@ def render_portfolio_creator(manager: PortfolioManager):
     st.divider()
     
     # Create button
-    if st.button("✅ 创建组合", type="primary", use_container_width=True):
+    if st.button("✅ 创建组合", type="primary", width="stretch"):
         if not name:
             st.error("请输入组合名称")
         elif not tickers_input or not weights_input:
