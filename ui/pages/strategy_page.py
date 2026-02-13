@@ -84,6 +84,17 @@ def render_strategy_page():
     # Handle strategy loading trigger
     load_trigger = st.session_state.pop("load_strategy_trigger", None)
     
+    # Handle "new strategy" trigger - must be before widget instantiation
+    new_strategy_trigger = st.session_state.pop("new_strategy_trigger", None)
+    if new_strategy_trigger:
+        st.session_state.pop("editing_strategy_name", None)
+        st.session_state.pop("editing_strategy_desc", None)
+        st.session_state["strategy_code_code"] = STRATEGY_TEMPLATES.get("均线交叉策略", "")
+        st.session_state["strategy_code_editor_version"] = st.session_state.get("strategy_code_editor_version", 0) + 1
+        # Clear name and description inputs BEFORE widgets are created
+        st.session_state["strat_name"] = ""
+        st.session_state["strat_desc"] = ""
+    
     # Main content
     col_editor, col_docs = st.columns([3, 2])
     
@@ -135,13 +146,8 @@ def render_strategy_page():
         # New strategy button
         if st.session_state.get("editing_strategy_name"):
             if st.button("➕ 新建策略", type="secondary"):
-                st.session_state.pop("editing_strategy_name", None)
-                st.session_state.pop("editing_strategy_desc", None)
-                st.session_state["strategy_code_code"] = STRATEGY_TEMPLATES.get("均线交叉策略", "")
-                st.session_state["strategy_code_editor_version"] = st.session_state.get("strategy_code_editor_version", 0) + 1
-                # Clear name and description inputs
-                st.session_state["strat_name"] = ""
-                st.session_state["strat_desc"] = ""
+                # Set trigger to reset state on next rerun (before widgets are instantiated)
+                st.session_state["new_strategy_trigger"] = True
                 st.rerun()
         
         # Code editor with templates

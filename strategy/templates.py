@@ -495,24 +495,20 @@ def strategy():
 TACTICAL_ALLOCATION_TEMPLATE = '''"""
 动态资产配置策略 (Tactical Asset Allocation)
 综合趋势、动量、波动率多维度信号动态调整。
+以当前组合配置为基础，根据多维度信号进行动态调整。
 """
 
 def strategy():
-    weights = {}
+    # 使用当前组合配置作为基础配置
+    base_allocation = ctx.get_current_weights()
     
-    # 基础配置
-    base_allocation = {
-        # 根据您的组合自定义
-        # 'IWY': 30,
-        # 'LVHI': 20,
-        # 'GSD.SI': 25,
-        # 'MBH.SI': 25,
-    }
-    
-    # 如果没有定义，使用等权重
-    if not base_allocation:
+    # 如果当前组合为空，使用等权重
+    if not base_allocation or sum(base_allocation.values()) == 0:
         n = len(ctx.tickers)
         base_allocation = {t: 100/n for t in ctx.tickers}
+        ctx.log("📋 当前组合为空，使用等权重作为基础配置")
+    else:
+        ctx.log("📋 使用当前组合配置作为基础")
     
     weights = base_allocation.copy()
     
@@ -525,19 +521,19 @@ def strategy():
         
         # 1. 趋势信号 (+/-1)
         if ctx.price_above_ma(ticker, 200):
-            score += 1
+            score = score + 1
             ctx.log(f"📈 {ticker}: 趋势向上 +1")
         else:
-            score -= 1
+            score = score - 1
             ctx.log(f"📉 {ticker}: 趋势向下 -1")
         
         # 2. 动量信号 (+/-1)
         mom = ctx.momentum(ticker, 20)
         if not mom.empty:
             if mom.iloc[-1] > 0:
-                score += 1
+                score = score + 1
             else:
-                score -= 1
+                score = score - 1
         
         # 3. RSI 信号 (+/-1)
         rsi = ctx.rsi(ticker)
@@ -546,16 +542,16 @@ def strategy():
             if 40 < current_rsi < 60:
                 pass  # 中性
             elif current_rsi < 30:
-                score += 1  # 超卖反弹机会
+                score = score + 1  # 超卖反弹机会
             elif current_rsi > 70:
-                score -= 1  # 超买风险
+                score = score - 1  # 超买风险
         
         # 根据评分调整权重
         base = weights.get(ticker, 0)
         adjustment = 1 + (score * 0.15)  # 每分±15%
         weights[ticker] = max(0, base * adjustment)
         
-        ctx.log(f"📊 {ticker}: 评分={score}, 权重调整为 {weights[ticker]:.1f}%")
+        ctx.log(f"📊 {ticker}: 基础={base:.1f}%, 评分={score}, 调整后={weights[ticker]:.1f}%")
     
     # VIX 整体调整
     if vix > 30:
@@ -661,27 +657,27 @@ def strategy():
         mom = ctx.momentum(ticker, 20)
         if not mom.empty:
             mom_score = mom.iloc[-1]
-            score += mom_score * 2  # 权重2
+            score = score + mom_score * 2  # 权重2
         
         # 因子2: 趋势 (在200日均线上方)
         if ctx.price_above_ma(ticker, 200):
-            score += 10
+            score = score + 10
         
         # 因子3: 波动率 (低波动加分)
         vol = ctx.volatility(ticker, 20, annualize=True)
         if not vol.empty:
             vol_val = vol.iloc[-1]
             if vol_val < 0.15:
-                score += 5  # 低波动
+                score = score + 5  # 低波动
             elif vol_val > 0.30:
-                score -= 5  # 高波动
+                score = score - 5  # 高波动
         
         # 因子4: RSI (避免极端)
         rsi = ctx.rsi(ticker)
         if not rsi.empty:
             rsi_val = rsi.iloc[-1]
             if 40 < rsi_val < 60:
-                score += 3  # 健康区间
+                score = score + 3  # 健康区间
         
         scores[ticker] = score
         ctx.log(f"📊 {ticker} 综合评分: {score:.1f}")

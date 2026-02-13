@@ -103,27 +103,74 @@ class StrategyContext:
         """Get current portfolio weights."""
         return self._current_weights.copy()
     
-    def set_target_weights(self, weights: Dict[str, float]):
+    def set_target_weights(self, weights: Dict[str, float], normalize: bool = True):
         """
         Set target portfolio weights.
         
         Args:
             weights: Dictionary of ticker -> weight (percentage 0-100)
                      Unknown tickers are ignored with a warning logged.
+            normalize: If True (default), auto-normalize weights to sum to 100%.
+                      This ensures the portfolio is always fully invested.
         """
         # Filter to only include known tickers, warn about unknown ones
+        # Also ensure non-negative weights
         filtered_weights = {}
         for ticker, weight in weights.items():
             if ticker in self._tickers:
-                filtered_weights[ticker] = weight
+                filtered_weights[ticker] = max(0, weight)  # 确保非负
             else:
                 self._signals.append(f"⚠️ 忽略未知标的: {ticker}")
+        
+        # Normalize weights to sum to 100%
+        if normalize and filtered_weights:
+            total = sum(filtered_weights.values())
+            if total > 0:
+                # Only log if there's a significant difference
+                if abs(total - 100) > 0.1:
+                    self._signals.append(f"📊 权重已归一化: {total:.1f}% → 100%")
+                filtered_weights = {
+                    t: (w / total) * 100 
+                    for t, w in filtered_weights.items()
+                }
+            else:
+                # All weights are zero - keep current weights
+                self._signals.append("⚠️ 所有权重为零，保持当前配置")
+                filtered_weights = self._current_weights.copy()
         
         self._target_weights = filtered_weights
     
     def get_target_weights(self) -> Optional[Dict[str, float]]:
         """Get target weights if set."""
         return self._target_weights
+    
+    def normalize_weights(self, weights: Dict[str, float], target_sum: float = 100) -> Dict[str, float]:
+        """
+        Normalize weights to a target sum (utility function for strategies).
+        
+        Args:
+            weights: Dictionary of ticker -> weight
+            target_sum: Target sum for weights (default 100%)
+            
+        Returns:
+            Normalized weights dictionary
+            
+        Example:
+            weights = {'A': 30, 'B': 20, 'C': 10}  # total = 60
+            normalized = ctx.normalize_weights(weights)  # {'A': 50, 'B': 33.3, 'C': 16.7}
+        """
+        # Ensure non-negative
+        clean_weights = {t: max(0, w) for t, w in weights.items()}
+        total = sum(clean_weights.values())
+        
+        if total == 0:
+            # Equal weight distribution
+            n = len(clean_weights)
+            if n > 0:
+                return {t: target_sum / n for t in clean_weights}
+            return clean_weights
+        
+        return {t: (w / total) * target_sum for t, w in clean_weights.items()}
     
     def _get_price_data(self, ticker: str) -> pd.Series:
         """Get cached price data for ticker."""
