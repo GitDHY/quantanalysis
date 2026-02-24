@@ -330,7 +330,26 @@ def render_scheduler_settings(settings, config: NotificationDefaults):
                 config.check_time = check_time.strftime("%H:%M")
                 settings.save_notification_config(config)
                 
-                st.success("✅ 定时设置已保存")
+                # Handle scheduler start/stop based on enabled state
+                if enabled:
+                    # Try to start the scheduler
+                    if not scheduler.is_running():
+                        if scheduler.start():
+                            # Update session state
+                            st.session_state.scheduler_instance = scheduler
+                            st.session_state.scheduler_initialized = True
+                            st.success("✅ 定时设置已保存，调度器已启动")
+                        else:
+                            st.success("✅ 定时设置已保存（调度器可能已在其他实例运行）")
+                    else:
+                        st.success("✅ 定时设置已保存")
+                else:
+                    # Stop the scheduler if it's running
+                    if scheduler.is_running():
+                        scheduler.stop()
+                        st.session_state.scheduler_initialized = False
+                        st.session_state.scheduler_instance = None
+                    st.success("✅ 定时设置已保存，调度器已停止")
             else:
                 st.error("保存失败")
     

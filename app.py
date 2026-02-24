@@ -42,6 +42,33 @@ st.set_page_config(
     }
 )
 
+from notification.scheduler import AlertScheduler
+
+
+def init_scheduler():
+    """Initialize and start the alert scheduler if enabled."""
+    # Use session state to ensure scheduler only starts once per app instance
+    if 'scheduler_initialized' not in st.session_state:
+        st.session_state.scheduler_initialized = False
+        st.session_state.scheduler_instance = None
+    
+    if not st.session_state.scheduler_initialized:
+        scheduler = AlertScheduler()
+        config = scheduler.load_config()
+        
+        # Only start if enabled in config
+        if config.enabled:
+            if scheduler.start():
+                st.session_state.scheduler_instance = scheduler
+                st.session_state.scheduler_initialized = True
+                print(f"[Scheduler] Started successfully. Check time: {config.check_time}")
+            # else: Lock held by another instance - this is normal, no warning needed
+        else:
+            st.session_state.scheduler_initialized = True
+            print("[Scheduler] Disabled in config, not starting")
+    
+    return st.session_state.scheduler_instance
+
 # Import pages
 from ui.pages.portfolio_page import render_portfolio_page
 from ui.pages.strategy_page import render_strategy_page
@@ -51,6 +78,9 @@ from ui.pages.notification_page import render_notification_page
 
 def main():
     """Main application entry point."""
+    
+    # Initialize scheduler on app start
+    init_scheduler()
     
     # Sidebar navigation
     st.sidebar.title("📈 Quant Platform")

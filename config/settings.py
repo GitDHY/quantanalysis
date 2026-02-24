@@ -100,7 +100,7 @@ class Settings:
     max_lookback_days: int = 1260       # Max historical data (~5 years)
     
     # Data cache settings
-    cache_expiry_hours: int = 4         # Price data cache expiry
+    cache_expiry_hours: int = 24         # Price data cache expiry (24 hours)
     
     def __post_init__(self):
         """Initialize computed paths after creation."""

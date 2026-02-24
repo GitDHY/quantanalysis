@@ -67,6 +67,10 @@ class AlertScheduler:
     Runs in background thread and triggers strategy evaluation.
     """
     
+    # 类级别的锁，防止同一进程内多次启动
+    _global_lock = threading.Lock()
+    _global_instance_running = False
+    
     def __init__(self):
         """Initialize scheduler."""
         self.settings = get_settings()
@@ -133,6 +137,11 @@ class AlertScheduler:
     
     def _acquire_lock(self) -> bool:
         """Acquire scheduler lock to prevent multiple instances."""
+        # 首先检查进程级别的锁
+        with AlertScheduler._global_lock:
+            if AlertScheduler._global_instance_running:
+                return False
+        
         try:
             if self.lock_file.exists():
                 # Check if lock is stale (older than 1 hour)
@@ -142,7 +151,14 @@ class AlertScheduler:
                 else:
                     return False
             
-            self.lock_file.write_text(str(datetime.now()))
+            # 写入锁文件，包含进程ID以便调试
+            import os
+            self.lock_file.write_text(f"{datetime.now().isoformat()}|pid:{os.getpid()}")
+            
+            # 标记全局实例正在运行
+            with AlertScheduler._global_lock:
+                AlertScheduler._global_instance_running = True
+            
             return True
         except Exception:
             return False
@@ -154,6 +170,10 @@ class AlertScheduler:
                 self.lock_file.unlink()
         except Exception:
             pass
+        
+        # 重置全局标记
+        with AlertScheduler._global_lock:
+            AlertScheduler._global_instance_running = False
     
     def _run_checks(self) -> Dict[str, Any]:
         """
@@ -191,14 +211,14 @@ class AlertScheduler:
                 config = self.load_config()
                 
                 if config.should_run_now():
+                    # 先更新 last_run，防止其他实例重复执行
+                    self.update_last_run()
+                    
                     # Run subscription checks
                     results = self.run_subscription_checks()
                     
                     # Also run any custom callbacks
                     callback_results = self._run_checks()
-                    
-                    # Update last run
-                    self.update_last_run()
                     
                     # Log results
                     print(f"Scheduler ran at {datetime.now().isoformat()}")
