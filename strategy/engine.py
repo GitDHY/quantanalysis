@@ -370,7 +370,7 @@ class StrategyEngine:
             self.load()
     
     def load(self) -> Dict[str, dict]:
-        """Load strategies from storage."""
+        """Load strategies from storage. If no file exists, try example file."""
         self._strategies = {}
         
         if self.storage_path.exists():
@@ -379,6 +379,18 @@ class StrategyEngine:
                     self._strategies = json.load(f)
             except Exception as e:
                 print(f"Error loading strategies: {e}")
+        else:
+            # Try to load from example file
+            example_path = self.storage_path.parent / "strategies.json.example"
+            if example_path.exists():
+                try:
+                    with open(example_path, 'r', encoding='utf-8') as f:
+                        self._strategies = json.load(f)
+                    # Save to actual file
+                    self.save()
+                    print("Loaded strategies from example file")
+                except Exception as e:
+                    print(f"Error loading example strategies: {e}")
         
         self._loaded = True
         return self._strategies

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+.conda/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific - 敏感数据和缓存
+data/cache/
+data/scheduler.lock
+data/scheduler_config.json
+data/notification_config.json
+alert_config.json
+
+# 敏感数据文件（包含密码和API密钥）
+data/portfolios.json
+data/strategies.json
+.streamlit/secrets.toml
+
+# 保留示例文件
+!data/portfolios.json.example
+!data/strategies.json.example
+!.streamlit/secrets.toml.example
+
+# Temporary files
+*.tmp
+*.temp
+untitled folder/

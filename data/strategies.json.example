@@ -1,0 +1,10 @@
+{
+    "均线交叉示例": {
+        "name": "均线交叉示例",
+        "code": "\"\"\"\n均线交叉策略示例\n\"\"\"\n\ndef strategy():\n    weights = ctx.get_current_weights()\n    \n    for ticker in ctx.tickers:\n        if ctx.ma_cross_up(ticker, 20, 50):\n            weights[ticker] = min(weights.get(ticker, 0) + 10, 50)\n            ctx.log(f\"🟢 {ticker} 金叉信号\")\n        elif ctx.ma_cross_down(ticker, 20, 50):\n            weights[ticker] = max(weights.get(ticker, 0) - 10, 0)\n            ctx.log(f\"🔴 {ticker} 死叉信号\")\n    \n    ctx.set_target_weights(weights)\n",
+        "description": "简单的均线交叉策略示例",
+        "portfolio_name": "示例组合",
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-01-01T00:00:00"
+    }
+}

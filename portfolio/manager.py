@@ -114,6 +114,7 @@ class PortfolioManager:
     def load(self) -> Dict[str, Portfolio]:
         """
         Load portfolios from storage file.
+        If no file exists, try to load from example file.
         
         Returns:
             Dictionary of portfolios
@@ -130,6 +131,22 @@ class PortfolioManager:
                     
             except Exception as e:
                 print(f"Error loading portfolios: {e}")
+        else:
+            # Try to load from example file
+            example_path = self.storage_path.parent / "portfolios.json.example"
+            if example_path.exists():
+                try:
+                    with open(example_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    for name, pdata in data.items():
+                        self._portfolios[name] = Portfolio.from_dict(pdata)
+                    
+                    # Save to actual file
+                    self.save()
+                    print("Loaded portfolios from example file")
+                except Exception as e:
+                    print(f"Error loading example portfolios: {e}")
         
         self._loaded = True
         return self._portfolios
