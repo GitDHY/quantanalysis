@@ -889,7 +889,7 @@ def run_strategy_check(config: NotificationDefaults, subscription: NotificationS
                 return 'color: red'
             return ''
         
-        styled_df = df.style.applymap(highlight_change, subset=['变动 (%)'])
+        styled_df = df.style.map(highlight_change, subset=['变动 (%)'])
         st.dataframe(styled_df, width="stretch", hide_index=True)
         
         # Send notification if requested
