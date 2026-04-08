@@ -1071,7 +1071,7 @@ def render_returns_distribution(all_values: Dict[str, pd.Series]):
             continue
         
         # Calculate monthly returns
-        monthly = values.resample('M').last().pct_change().dropna() * 100
+        monthly = values.resample('ME').last().pct_change().dropna() * 100
         
         color = colors[i % len(colors)]
         
@@ -1096,7 +1096,7 @@ def render_returns_distribution(all_values: Dict[str, pd.Series]):
     for name, values in all_values.items():
         if values is None or values.empty:
             continue
-        monthly = values.resample('M').last().pct_change().dropna() * 100
+        monthly = values.resample('ME').last().pct_change().dropna() * 100
         stats_data.append({
             '策略': name,
             '平均月收益 (%)': round(monthly.mean(), 2),

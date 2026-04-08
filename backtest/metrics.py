@@ -316,12 +316,12 @@ class PerformanceMetrics:
     
     def monthly_returns(self, values: pd.Series) -> pd.Series:
         """Calculate monthly returns."""
-        monthly = values.resample('M').last()
+        monthly = values.resample('ME').last()
         returns = monthly.pct_change() * 100
         return returns
     
     def yearly_returns(self, values: pd.Series) -> pd.Series:
         """Calculate yearly returns."""
-        yearly = values.resample('Y').last()
+        yearly = values.resample('YE').last()
         returns = yearly.pct_change() * 100
         return returns

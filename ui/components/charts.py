@@ -151,7 +151,7 @@ def render_monthly_returns_heatmap(
         Plotly figure
     """
     # Calculate monthly returns
-    monthly = values.resample('M').last().pct_change() * 100
+    monthly = values.resample('ME').last().pct_change() * 100
     
     if monthly.empty:
         st.info("Not enough data for monthly analysis")
@@ -169,7 +169,7 @@ def render_monthly_returns_heatmap(
     pivot = pivot.reindex(columns=month_order)
     
     # Add yearly total
-    yearly = values.resample('Y').last().pct_change() * 100
+    yearly = values.resample('YE').last().pct_change() * 100
     yearly.index = yearly.index.year
     pivot['YTD'] = yearly
     
