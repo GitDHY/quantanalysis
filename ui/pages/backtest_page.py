@@ -10,6 +10,9 @@ import numpy as np
 from datetime import date, timedelta
 from typing import Dict, List, Optional
 
+# pandas >= 2.2 uses 'ME'/'YE', older versions use 'M'/'Y'
+_MONTH_FREQ = 'ME' if pd.__version__ >= '2.2' else 'M'
+
 from backtest.engine import BacktestEngine, BacktestConfig, BacktestResult
 from portfolio.manager import PortfolioManager
 from strategy.engine import StrategyEngine
@@ -1071,7 +1074,7 @@ def render_returns_distribution(all_values: Dict[str, pd.Series]):
             continue
         
         # Calculate monthly returns
-        monthly = values.resample('ME').last().pct_change().dropna() * 100
+        monthly = values.resample(_MONTH_FREQ).last().pct_change().dropna() * 100
         
         color = colors[i % len(colors)]
         
@@ -1096,7 +1099,7 @@ def render_returns_distribution(all_values: Dict[str, pd.Series]):
     for name, values in all_values.items():
         if values is None or values.empty:
             continue
-        monthly = values.resample('ME').last().pct_change().dropna() * 100
+        monthly = values.resample(_MONTH_FREQ).last().pct_change().dropna() * 100
         stats_data.append({
             '策略': name,
             '平均月收益 (%)': round(monthly.mean(), 2),

@@ -7,6 +7,10 @@ import pandas as pd
 from typing import Dict, Optional, List
 from dataclasses import dataclass
 
+# pandas >= 2.2 uses 'ME'/'YE', older versions use 'M'/'Y'
+_MONTH_FREQ = 'ME' if pd.__version__ >= '2.2' else 'M'
+_YEAR_FREQ = 'YE' if pd.__version__ >= '2.2' else 'Y'
+
 
 @dataclass
 class MetricsConfig:
@@ -316,12 +320,12 @@ class PerformanceMetrics:
     
     def monthly_returns(self, values: pd.Series) -> pd.Series:
         """Calculate monthly returns."""
-        monthly = values.resample('ME').last()
+        monthly = values.resample(_MONTH_FREQ).last()
         returns = monthly.pct_change() * 100
         return returns
     
     def yearly_returns(self, values: pd.Series) -> pd.Series:
         """Calculate yearly returns."""
-        yearly = values.resample('YE').last()
+        yearly = values.resample(_YEAR_FREQ).last()
         returns = yearly.pct_change() * 100
         return returns
