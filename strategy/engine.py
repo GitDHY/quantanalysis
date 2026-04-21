@@ -40,6 +40,7 @@ class StrategyContext:
         current_date: date,
         data_fetcher: Optional[DataFetcher] = None,
         lookback_days: int = 252,
+        normalize_weights: bool = True,
     ):
         """
         Initialize strategy context.
@@ -50,6 +51,9 @@ class StrategyContext:
             current_date: Current simulation date
             data_fetcher: Data fetcher instance
             lookback_days: Days of historical data available
+            normalize_weights: Default behavior of set_target_weights when caller
+                does not specify `normalize`. True 保持历史行为；False 时按字面
+                权重执行（<100% 视为持现金，>100% 产生杠杆警告）。
         """
         self._tickers = tickers
         self._current_weights = current_weights.copy()
@@ -59,6 +63,7 @@ class StrategyContext:
         self._data_fetcher = data_fetcher or get_data_fetcher()
         self._indicators = TechnicalIndicators()
         self._signals: List[str] = []
+        self._normalize_weights = normalize_weights
         
         # Cache for price data
         self._price_cache: Dict[str, pd.Series] = {}
@@ -103,15 +108,18 @@ class StrategyContext:
         """Get current portfolio weights."""
         return self._current_weights.copy()
     
-    def set_target_weights(self, weights: Dict[str, float], normalize: bool = True):
+    def set_target_weights(self, weights: Dict[str, float], normalize: Optional[bool] = None):
         """
         Set target portfolio weights.
         
         Args:
             weights: Dictionary of ticker -> weight (percentage 0-100)
                      Unknown tickers are ignored with a warning logged.
-            normalize: If True (default), auto-normalize weights to sum to 100%.
-                      This ensures the portfolio is always fully invested.
+            normalize: If True, auto-normalize weights to sum to 100%.
+                      If False, use weights as-is (<100% = hold cash, >100% = leverage warning).
+                      If None (default), fall back to the context-level default
+                      (`StrategyContext(normalize_weights=...)`，由调用方/回测/信号
+                      订阅决定)。
         """
         # Filter to only include known tickers, warn about unknown ones
         # Also ensure non-negative weights
@@ -121,10 +129,18 @@ class StrategyContext:
                 filtered_weights[ticker] = max(0, weight)  # 确保非负
             else:
                 self._signals.append(f"⚠️ 忽略未知标的: {ticker}")
-        
-        # Normalize weights to sum to 100%
-        if normalize and filtered_weights:
-            total = sum(filtered_weights.values())
+
+        # 解析最终 normalize 决策：显式传参优先，否则走上下文默认
+        effective_normalize = self._normalize_weights if normalize is None else normalize
+
+        if not filtered_weights:
+            self._target_weights = filtered_weights
+            return
+
+        total = sum(filtered_weights.values())
+
+        if effective_normalize:
+            # Normalize weights to sum to 100%
             if total > 0:
                 # Only log if there's a significant difference
                 if abs(total - 100) > 0.1:
@@ -137,6 +153,17 @@ class StrategyContext:
                 # All weights are zero - keep current weights
                 self._signals.append("⚠️ 所有权重为零，保持当前配置")
                 filtered_weights = self._current_weights.copy()
+        else:
+            # 不做归一化，按字面值使用
+            if total > 100 + 0.1:
+                self._signals.append(
+                    f"⚠️ 目标权重总和 {total:.1f}% > 100%，可能产生杠杆敞口"
+                )
+            elif total <= 0:
+                # 全 0 视为无效输入，保留当前仓位
+                self._signals.append("⚠️ 所有权重为零，保持当前配置")
+                filtered_weights = self._current_weights.copy()
+            # 0 < total < 100 视为部分持现金，静默允许
         
         self._target_weights = filtered_weights
     
@@ -476,6 +503,7 @@ class StrategyEngine:
         current_weights: Dict[str, float],
         current_date: date = None,
         lookback_days: int = 252,
+        normalize_weights: bool = True,
     ) -> StrategyResult:
         """
         Execute a strategy.
@@ -486,6 +514,9 @@ class StrategyEngine:
             current_weights: Current portfolio weights
             current_date: Simulation date
             lookback_days: Historical data days
+            normalize_weights: 默认 True，传入 StrategyContext 作为
+                `set_target_weights` 未显式指定 normalize 时的默认行为。
+                False 时允许策略按字面值设置权重（<100% 持现金，>100% 杠杆警告）。
             
         Returns:
             StrategyResult
@@ -502,6 +533,7 @@ class StrategyEngine:
             current_weights=current_weights,
             current_date=current_date,
             lookback_days=lookback_days,
+            normalize_weights=normalize_weights,
         )
         
         # Create execution context with API
@@ -560,6 +592,7 @@ class StrategyEngine:
         strategy_name: str,
         tickers: List[str],
         current_weights: Dict[str, float],
+        normalize_weights: bool = True,
     ) -> StrategyResult:
         """
         Run a saved strategy check.
@@ -568,6 +601,7 @@ class StrategyEngine:
             strategy_name: Name of saved strategy
             tickers: Portfolio tickers
             current_weights: Current weights
+            normalize_weights: 是否归一化策略返回的目标权重（透传到 execute）
             
         Returns:
             StrategyResult
@@ -585,4 +619,5 @@ class StrategyEngine:
             code=strategy['code'],
             tickers=tickers,
             current_weights=current_weights,
+            normalize_weights=normalize_weights,
         )

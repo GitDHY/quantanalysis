@@ -30,6 +30,10 @@ class NotificationSubscription:
     notify_email: bool = True        # Send email notifications
     notify_wechat: bool = True       # Send WeChat notifications
     threshold_pct: float = 1.0       # Minimum weight change % to trigger notification
+    # 运行策略时是否把目标权重归一化到 100%。
+    # True（默认）：与历史行为一致。
+    # False：按字面值使用，<100% 视为持现金，>100% 视为杠杆并产生警告。
+    normalize_weights: bool = True
     created_at: str = ""
     
     def to_dict(self) -> dict:
@@ -41,6 +45,7 @@ class NotificationSubscription:
             'notify_email': self.notify_email,
             'notify_wechat': self.notify_wechat,
             'threshold_pct': self.threshold_pct,
+            'normalize_weights': self.normalize_weights,
             'created_at': self.created_at,
         }
     
@@ -54,6 +59,7 @@ class NotificationSubscription:
             notify_email=data.get('notify_email', True),
             notify_wechat=data.get('notify_wechat', True),
             threshold_pct=data.get('threshold_pct', 1.0),
+            normalize_weights=data.get('normalize_weights', True),
             created_at=data.get('created_at', ''),
         )
 

@@ -107,6 +107,20 @@ def render_backtest_page():
             step=0.05,
             key="bt_slip"
         ) / 100
+        
+        st.divider()
+        
+        # Weight normalization option
+        normalize_weights = st.checkbox(
+            "自动归一化权重",
+            value=True,
+            key="bt_normalize_weights",
+            help=(
+                "开启时（默认），策略返回的目标权重会自动缩放到总和为 100%。"
+                "关闭时，按字面值使用权重：总和 < 100% 视为持有部分现金；"
+                "总和 > 100% 视为杠杆，回测会给出警告提示。"
+            ),
+        )
     
     # Main content - Three tabs
     tab1, tab2, tab3 = st.tabs(["📊 静态回测", "🧠 策略回测", "⚔️ 多策略对比"])
@@ -117,7 +131,8 @@ def render_backtest_page():
             start_date, end_date,
             initial_capital,
             rebalance_freq,
-            commission_pct, slippage_pct
+            commission_pct, slippage_pct,
+            normalize_weights
         )
     
     with tab2:
@@ -127,7 +142,8 @@ def render_backtest_page():
             start_date, end_date,
             initial_capital,
             rebalance_freq,
-            commission_pct, slippage_pct
+            commission_pct, slippage_pct,
+            normalize_weights
         )
     
     with tab3:
@@ -137,7 +153,8 @@ def render_backtest_page():
             start_date, end_date,
             initial_capital,
             rebalance_freq,
-            commission_pct, slippage_pct
+            commission_pct, slippage_pct,
+            normalize_weights
         )
 
 
@@ -194,6 +211,7 @@ def render_static_backtest(
                 rebalance_freq=rebalance_freq,
                 commission_pct=commission_pct,
                 slippage_pct=slippage_pct,
+                normalize_weights=normalize_weights,
             )
             engine = BacktestEngine(config)
             validation = engine.validate_data_coverage(portfolio.tickers, start_date, end_date)
@@ -354,6 +372,7 @@ def render_dynamic_backtest(
                 rebalance_freq=rebalance_freq,
                 commission_pct=commission_pct,
                 slippage_pct=slippage_pct,
+                normalize_weights=normalize_weights,
             )
             engine = BacktestEngine(config)
             validation = engine.validate_data_coverage(portfolio.tickers, start_date, end_date)
@@ -461,7 +480,8 @@ def render_multi_strategy_comparison(
     initial_capital: float,
     rebalance_freq: str,
     commission_pct: float,
-    slippage_pct: float
+    slippage_pct: float,
+    normalize_weights: bool = True
 ):
     """Render multi-strategy comparison backtest."""
     
@@ -536,6 +556,7 @@ def render_multi_strategy_comparison(
             rebalance_freq=rebalance_freq,
             commission_pct=commission_pct,
             slippage_pct=slippage_pct,
+            normalize_weights=normalize_weights,
         )
         
         engine = BacktestEngine(config)
@@ -1218,6 +1239,12 @@ def display_backtest_results(result, benchmark_values=None, show_trades=False,
     
     st.divider()
     st.subheader("📊 回测结果")
+    
+    # 如果有归一化/杠杆相关的警告，优先展示
+    if hasattr(result, 'warnings') and result.warnings:
+        with st.expander(f"⚠️ 回测警告 ({len(result.warnings)} 条)", expanded=True):
+            for w in result.warnings:
+                st.warning(w)
     
     # 如果有数据覆盖信息，显示摘要
     if result.data_validation is not None and result.has_data_warnings:

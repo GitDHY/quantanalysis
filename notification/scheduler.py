@@ -382,11 +382,12 @@ class AlertScheduler:
                 result.error = f"Portfolio '{subscription.portfolio_name}' not found"
                 return result
             
-            # Execute strategy
+            # Execute strategy（透传订阅级归一化开关）
             exec_result = strategy_engine.execute(
                 code=strategy['code'],
                 tickers=portfolio.tickers,
                 current_weights=portfolio.weights,
+                normalize_weights=subscription.normalize_weights,
             )
             
             if not exec_result.success:

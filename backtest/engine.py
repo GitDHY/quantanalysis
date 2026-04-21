@@ -156,6 +156,10 @@ class BacktestConfig:
     commission_pct: float = 0.001
     slippage_pct: float = 0.001
     risk_free_rate: float = 0.03
+    # 是否自动将策略返回的目标权重归一化到总和为 100%。
+    # True（默认）：与历史行为一致。
+    # False：按字面值使用权重，<100% 视为持现金，>100% 视为杠杆并产生警告。
+    normalize_weights: bool = True
     
     def __post_init__(self):
         if self.start_date is None:
@@ -202,6 +206,8 @@ class BacktestResult:
     data_validation: Optional[DataValidationResult] = None
     effective_start_date: Optional[date] = None
     effective_end_date: Optional[date] = None
+    # 回测期间累积的非致命警告（例如关闭归一化时目标权重 >100% 的杠杆提醒）
+    warnings: List[str] = field(default_factory=list)
     
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame."""
@@ -676,6 +682,7 @@ class BacktestEngine:
         portfolio_values = []
         weights_history = []
         trades = []
+        _backtest_warnings: list = []  # 收集非致命警告（如关闭归一化时的杠杆提醒）
         
         # Calculate initial position values
         cash = cfg.initial_capital
@@ -746,6 +753,7 @@ class BacktestEngine:
                         current_date=current_date,
                         data_fetcher=self.data_fetcher,
                         lookback_days=252,
+                        normalize_weights=cfg.normalize_weights,
                     )
                     
                     # Execute strategy
@@ -754,11 +762,23 @@ class BacktestEngine:
                     if target_weights is None:
                         continue
                     
-                    # Normalize target weights
+                    # Normalize target weights (conditioned on config)
                     target_total = sum(target_weights.values())
-                    if target_total > 0:
-                        target_weights = {t: (w / target_total) * 100 
-                                         for t, w in target_weights.items()}
+                    if cfg.normalize_weights:
+                        # 历史默认行为：归一化到 100%
+                        if target_total > 0:
+                            target_weights = {t: (w / target_total) * 100 
+                                             for t, w in target_weights.items()}
+                    else:
+                        # 用户关闭归一化：按字面值使用
+                        if target_total > 100 + 0.1:
+                            warn_msg = (
+                                f"⚠️ [{current_date}] 目标权重总和 "
+                                f"{target_total:.1f}% > 100%，可能产生杠杆敞口"
+                            )
+                            _backtest_warnings.append(warn_msg)
+                        elif target_total <= 0:
+                            continue  # 全 0 跳过本次调仓
                     
                     # Execute rebalancing trades
                     for ticker in available:
@@ -849,6 +869,8 @@ class BacktestEngine:
             data_validation=data_validation,
             effective_start_date=effective_start,
             effective_end_date=effective_end,
+            # 杠杆/归一化相关的累积警告（仅保留前 20 条，避免过长）
+            warnings=_backtest_warnings[:20],
         )
     
     def run_with_code(

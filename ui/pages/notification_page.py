@@ -221,6 +221,18 @@ def render_subscription_manager(settings, config: NotificationDefaults):
                 key="new_sub_threshold"
             )
         
+        # Weight normalization option
+        normalize_weights = st.checkbox(
+            "自动归一化权重",
+            value=True,
+            key="new_sub_normalize_weights",
+            help=(
+                "开启时（默认），策略返回的目标权重会自动缩放到总和为 100%。"
+                "关闭时，按字面值使用权重：总和 < 100% 视为持有部分现金；"
+                "总和 > 100% 视为杠杆，信号日志会给出警告提示。"
+            ),
+        )
+        
         submitted = st.form_submit_button("➕ 添加订阅", type="primary", width="stretch")
         
         if submitted:
@@ -244,6 +256,7 @@ def render_subscription_manager(settings, config: NotificationDefaults):
                         notify_email=notify_email,
                         notify_wechat=notify_wechat,
                         threshold_pct=threshold,
+                        normalize_weights=normalize_weights,
                         created_at=datetime.now().isoformat(),
                     )
                     config.subscriptions.append(new_sub)
@@ -983,11 +996,12 @@ def run_all_subscription_checks(config: NotificationDefaults):
                 st.warning(f"⚠️ {sub.strategy_name}: 策略或组合不存在")
             continue
         
-        # Execute strategy
+        # Execute strategy（透传订阅级归一化开关）
         result = strategy_engine.execute(
             code=strategy['code'],
             tickers=portfolio.tickers,
             current_weights=portfolio.weights,
+            normalize_weights=sub.normalize_weights,
         )
         
         if not result.success:
