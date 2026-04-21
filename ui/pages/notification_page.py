@@ -133,7 +133,7 @@ def render_subscription_manager(settings, config: NotificationDefaults):
     else:
         for i, sub in enumerate(config.subscriptions):
             with st.container():
-                col1, col2, col3, col4, col5 = st.columns([3, 3, 2, 2, 1])
+                col1, col2, col3, col4, col_edit, col_del = st.columns([3, 3, 2, 2, 1, 1])
                 
                 with col1:
                     st.markdown(f"**📊 {sub.strategy_name}**")
@@ -147,17 +147,37 @@ def render_subscription_manager(settings, config: NotificationDefaults):
                         channels.append("📧")
                     if sub.notify_wechat:
                         channels.append("💬")
-                    st.markdown(" ".join(channels) if channels else "无")
+                    # 额外显示归一化状态，便于一眼识别
+                    norm_icon = "⚖️" if sub.normalize_weights else "🪙"
+                    channels.append(norm_icon)
+                    st.markdown(
+                        " ".join(channels) if channels else "无",
+                        help=(
+                            "⚖️ 自动归一化权重开启\n"
+                            "🪙 自动归一化权重关闭（按字面值执行）"
+                        ),
+                    )
                 
                 with col4:
                     status = "🟢 启用" if sub.enabled else "⚪ 停用"
                     st.markdown(status)
                 
-                with col5:
+                with col_edit:
+                    if st.button("✏️", key=f"edit_sub_{sub.id}", help="编辑此订阅"):
+                        st.session_state['editing_sub_id'] = sub.id
+                        st.rerun()
+                
+                with col_del:
                     if st.button("🗑️", key=f"del_sub_{sub.id}", help="删除此订阅"):
                         config.subscriptions = [s for s in config.subscriptions if s.id != sub.id]
+                        # 若正在编辑的就是被删的订阅，清掉编辑状态
+                        if st.session_state.get('editing_sub_id') == sub.id:
+                            del st.session_state['editing_sub_id']
                         settings.save_notification_config(config)
                         st.rerun()
+    
+    # 渲染编辑表单（如果有订阅处于编辑状态）
+    _render_edit_subscription_form(settings, config)
     
     st.divider()
     
@@ -266,6 +286,108 @@ def render_subscription_manager(settings, config: NotificationDefaults):
                         st.rerun()
                     else:
                         st.error("保存失败")
+
+
+def _render_edit_subscription_form(settings, config: NotificationDefaults):
+    """
+    渲染订阅编辑表单（仅当 session_state 中存在 editing_sub_id 时展示）。
+    
+    允许用户修改通知方式、变动阈值、自动归一化开关以及启用状态。
+    策略 / 组合为订阅的核心标识，不在此处编辑（如需更换请删除后重建）。
+    """
+    editing_id = st.session_state.get('editing_sub_id')
+    if not editing_id:
+        return
+    
+    # 定位目标订阅
+    target = next((s for s in config.subscriptions if s.id == editing_id), None)
+    if target is None:
+        # 编辑目标不存在（可能已被删除），清理状态
+        del st.session_state['editing_sub_id']
+        return
+    
+    st.divider()
+    st.write(f"**✏️ 编辑订阅: {target.strategy_name} + {target.portfolio_name}**")
+    
+    with st.form(f"edit_sub_form_{target.id}"):
+        col_email, col_wechat, col_threshold = st.columns(3)
+        
+        with col_email:
+            edit_notify_email = st.checkbox(
+                "📧 邮件通知",
+                value=target.notify_email,
+                key=f"edit_sub_email_{target.id}",
+            )
+        
+        with col_wechat:
+            edit_notify_wechat = st.checkbox(
+                "💬 微信通知",
+                value=target.notify_wechat,
+                key=f"edit_sub_wechat_{target.id}",
+            )
+        
+        with col_threshold:
+            edit_threshold = st.number_input(
+                "变动阈值 (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=float(target.threshold_pct),
+                step=0.5,
+                key=f"edit_sub_threshold_{target.id}",
+                help="只有当仓位变动超过此阈值时才发送通知",
+            )
+        
+        col_norm, col_enabled = st.columns(2)
+        
+        with col_norm:
+            edit_normalize = st.checkbox(
+                "自动归一化权重",
+                value=target.normalize_weights,
+                key=f"edit_sub_normalize_{target.id}",
+                help=(
+                    "开启时（默认），策略返回的目标权重会自动缩放到总和为 100%。"
+                    "关闭时，按字面值使用权重：总和 < 100% 视为持有部分现金；"
+                    "总和 > 100% 视为杠杆，信号日志会给出警告提示。"
+                ),
+            )
+        
+        with col_enabled:
+            edit_enabled = st.checkbox(
+                "启用此订阅",
+                value=target.enabled,
+                key=f"edit_sub_enabled_{target.id}",
+                help="停用后，定时检查与批量检查将跳过此订阅",
+            )
+        
+        col_save, col_cancel = st.columns(2)
+        
+        with col_save:
+            saved = st.form_submit_button("💾 保存修改", type="primary", width="stretch")
+        
+        with col_cancel:
+            cancelled = st.form_submit_button("❌ 取消", width="stretch")
+        
+        if cancelled:
+            del st.session_state['editing_sub_id']
+            st.rerun()
+        
+        if saved:
+            if not edit_notify_email and not edit_notify_wechat:
+                st.error("请至少选择一种通知方式")
+            else:
+                # 就地更新目标订阅
+                target.notify_email = edit_notify_email
+                target.notify_wechat = edit_notify_wechat
+                target.threshold_pct = edit_threshold
+                target.normalize_weights = edit_normalize
+                target.enabled = edit_enabled
+                
+                if settings.save_notification_config(config):
+                    st.success("✅ 订阅已更新")
+                    del st.session_state['editing_sub_id']
+                    st.rerun()
+                else:
+                    st.error("保存失败")
 
 
 def render_scheduler_settings(settings, config: NotificationDefaults):
@@ -847,11 +969,12 @@ def run_strategy_check(config: NotificationDefaults, subscription: NotificationS
         return
     
     with st.spinner(f"正在运行策略 '{subscription.strategy_name}'..."):
-        # Execute strategy
+        # Execute strategy（透传订阅级归一化开关）
         result = strategy_engine.execute(
             code=strategy['code'],
             tickers=portfolio.tickers,
             current_weights=portfolio.weights,
+            normalize_weights=subscription.normalize_weights,
         )
     
     if not result.success:

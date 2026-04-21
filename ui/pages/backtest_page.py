@@ -165,7 +165,8 @@ def render_static_backtest(
     initial_capital: float,
     rebalance_freq: str,
     commission_pct: float,
-    slippage_pct: float
+    slippage_pct: float,
+    normalize_weights: bool = True
 ):
     """Render static (buy-and-hold) backtest."""
     
@@ -259,6 +260,7 @@ def render_static_backtest(
             rebalance_freq=rebalance_freq,
             commission_pct=commission_pct,
             slippage_pct=slippage_pct,
+            normalize_weights=normalize_weights,
         )
         
         # Run backtest
@@ -304,7 +306,8 @@ def render_dynamic_backtest(
     initial_capital: float,
     rebalance_freq: str,
     commission_pct: float,
-    slippage_pct: float
+    slippage_pct: float,
+    normalize_weights: bool = True
 ):
     """Render dynamic strategy backtest."""
     
@@ -419,6 +422,7 @@ def render_dynamic_backtest(
             rebalance_freq=rebalance_freq,
             commission_pct=commission_pct,
             slippage_pct=slippage_pct,
+            normalize_weights=normalize_weights,
         )
         
         # Run dynamic backtest
