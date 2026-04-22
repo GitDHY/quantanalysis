@@ -25,11 +25,11 @@
     },
     "动量策略1": {
         "name": "动量策略1",
-        "code": "\"\"\"\n动量策略 (Momentum Strategy)\n根据过去一段时间的涨幅调整仓位，追涨杀跌。\n\"\"\"\n\ndef strategy():\n    weights = ctx.get_current_weights()\n    \n    # 策略参数\n    lookback = 20       # 动量计算周期\n    threshold = 5       # 动量阈值 (%)\n    \n    for ticker in ctx.tickers:\n        current_weight = weights.get(ticker, 0)\n        \n        # 计算动量\n        mom = ctx.momentum(ticker, lookback)\n        if mom.empty:\n            continue\n        \n        current_momentum = mom.iloc[-1]\n        \n        # 正向动量: 增加仓位\n        if current_momentum > threshold:\n            weights[ticker] = min(current_weight + 5, 40)\n            ctx.log(f\"📈 {ticker} 动量 {current_momentum:.1f}% > {threshold}%, 增仓\")\n        \n        # 负向动量: 减少仓位\n        elif current_momentum < -threshold:\n            weights[ticker] = max(current_weight - 5, 0)\n            ctx.log(f\"📉 {ticker} 动量 {current_momentum:.1f}% < -{threshold}%, 减仓\")\n    \n    ctx.set_target_weights(weights)\n",
+        "code": "\"\"\"\n动量策略 (Momentum Strategy)\n根据过去一段时间的涨幅调整仓位，追涨杀跌。\n\"\"\"\n\ndef strategy():\n    weights = ctx.get_current_weights()\n    \n    # 策略参数\n    lookback = 20       # 动量计算周期\n    threshold = 5       # 动量阈值 (%)\n    \n    for ticker in ctx.tickers:\n        current_weight = weights.get(ticker, 0)\n        \n        # 计算动量\n        mom = ctx.momentum(ticker, lookback)\n        if mom.empty:\n            continue\n        \n        current_momentum = mom.iloc[-1]\n        \n        # 正向动量: 增加仓位\n        if current_momentum > threshold:\n            weights[ticker] = min(current_weight + 5, 60)\n            ctx.log(f\"📈 {ticker} 动量 {current_momentum:.1f}% > {threshold}%, 增仓\")\n        \n        # 负向动量: 减少仓位\n        elif current_momentum < -threshold:\n            weights[ticker] = max(current_weight - 5, 0)\n            ctx.log(f\"📉 {ticker} 动量 {current_momentum:.1f}% < -{threshold}%, 减仓\")\n    \n    ctx.set_target_weights(weights)\n",
         "description": "",
-        "portfolio_name": "Current",
-        "created_at": "2026-02-06T17:14:38.891411",
-        "updated_at": "2026-02-06T17:14:38.891416"
+        "portfolio_name": "op6",
+        "created_at": "2026-04-22T14:09:44.420474",
+        "updated_at": "2026-04-22T14:09:44.420477"
     },
     "VIX波动率1": {
         "name": "VIX波动率1",

@@ -827,7 +827,16 @@ class BacktestEngine:
                     
                 except Exception as e:
                     # Strategy error - continue with current weights
-                    pass
+                    # 同时把异常记录到 warnings，便于在 UI/日志里定位"静默失败"的情况
+                    try:
+                        warn_msg = (
+                            f"⚠️ [{current_date}] 策略执行异常，已跳过本次调仓："
+                            f"{type(e).__name__}: {e}"
+                        )
+                        _backtest_warnings.append(warn_msg)
+                    except Exception:
+                        # 记录异常本身不能再抛异常影响主流程
+                        pass
         
         # Convert to Series/DataFrame
         values_df = pd.DataFrame(portfolio_values)
@@ -895,6 +904,10 @@ class BacktestEngine:
         from strategy.engine import StrategyEngine
         
         engine = StrategyEngine()
+        # 解析本地 config，便于把归一化开关透传给 StrategyEngine.execute
+        # （修复：之前没传，导致策略层总是默认归一化到 100%，
+        #  使得 run_dynamic 里 cfg.normalize_weights 的 if/else 两条分支输出一致）
+        cfg = config or self.config
         
         def strategy_func(ctx, current_date):
             result = engine.execute(
@@ -902,6 +915,7 @@ class BacktestEngine:
                 tickers=ctx.tickers,
                 current_weights=ctx.get_current_weights(),
                 current_date=current_date,
+                normalize_weights=cfg.normalize_weights,
             )
             
             if result.success:
