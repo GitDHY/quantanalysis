@@ -255,7 +255,64 @@ class BacktestEngine:
         # Initialize metrics calculator
         metrics_config = MetricsConfig(risk_free_rate=self.config.risk_free_rate)
         self.metrics = PerformanceMetrics(metrics_config)
-    
+
+    def _apply_trade(
+        self,
+        *,
+        positions: Dict[str, float],
+        cash: float,
+        ticker: str,
+        target_value: float,
+        current_value: float,
+        price: float,
+    ) -> "tuple[Dict[str, float], float, float, Optional[Trade]]":
+        """
+        Execute one rebalancing trade and return updated (positions, cash, cost, trade).
+
+        Cash semantics:
+            Buy:  cash -= (trade_value + cost)   shares += trade_value / price
+            Sell: cash += (trade_value - cost)   shares -= trade_value / price
+            (trade_value here is the absolute notional moved.)
+
+        The returned ``trade`` has ``date=None`` — the caller must overwrite it
+        before appending to a ``trades`` list. ``Trade.to_dict()`` already
+        tolerates non-``date`` values via ``str(self.date)``, so a missed
+        overwrite degrades gracefully rather than crashing, but callers should
+        still set the date for correctness.
+
+        Returns ``(positions, cash, cost, trade_or_None)``. ``trade_or_None`` is
+        ``None`` when the trade was filtered out (notional below the dust
+        threshold).
+        """
+        trade_value_signed = target_value - current_value
+        trade_value = abs(trade_value_signed)
+
+        if trade_value < 100:  # Skip tiny trades
+            return positions, cash, 0.0, None
+
+        cost = self.cost_model.calculate_total_cost(trade_value, price)
+
+        positions = dict(positions)  # don't mutate caller's dict in place
+        if trade_value_signed > 0:  # Buy
+            positions[ticker] = positions.get(ticker, 0) + trade_value / price
+            cash -= (trade_value + cost)
+            action = "BUY"
+        else:  # Sell
+            positions[ticker] = max(0, positions.get(ticker, 0) - trade_value / price)
+            cash += (trade_value - cost)
+            action = "SELL"
+
+        trade = Trade(
+            date=None,  # caller fills this in
+            ticker=ticker,
+            action=action,
+            shares=trade_value / price,
+            price=price,
+            value=trade_value,
+            cost=cost,
+        )
+        return positions, cash, cost, trade
+
     def validate_data_coverage(
         self,
         tickers: List[str],
