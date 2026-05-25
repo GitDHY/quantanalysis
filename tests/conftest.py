@@ -19,14 +19,16 @@ from backtest.engine import BacktestConfig
 def synthetic_prices() -> pd.DataFrame:
     """
     Two-asset price DataFrame with known, simple dynamics.
-    AAA: rises 1% per bar deterministically (50 bars: 100 -> ~164).
-    BBB: alternates +2% / -1% per bar.
+    AAA: rises 1% per bar deterministically (50 bars: 100 -> ~162).
+    BBB: starts at 100, then alternates +2% / -1% per bar (first move on bar 1).
     Index is business days starting 2024-01-02.
     """
     n = 50
     idx = pd.bdate_range("2024-01-02", periods=n)
     aaa = 100.0 * (1.01 ** np.arange(n))
-    bbb_returns = np.where(np.arange(n) % 2 == 0, 0.02, -0.01)
+    bbb_returns = np.zeros(n)
+    bbb_returns[1::2] = 0.02   # bars 1, 3, 5, ...: +2%
+    bbb_returns[2::2] = -0.01  # bars 2, 4, 6, ...: -1%
     bbb = 100.0 * np.cumprod(1 + bbb_returns)
     return pd.DataFrame({"AAA": aaa, "BBB": bbb}, index=idx)
 
@@ -36,7 +38,7 @@ def cost_free_config() -> BacktestConfig:
     """Backtest config with all transaction costs zeroed."""
     return BacktestConfig(
         start_date=date(2024, 1, 2),
-        end_date=date(2024, 3, 15),
+        end_date=date(2024, 3, 12),
         initial_capital=100_000.0,
         rebalance_freq="monthly",
         commission_fixed=0.0,
@@ -51,7 +53,7 @@ def fixed_cost_config() -> BacktestConfig:
     """Backtest config with $10 fixed commission per trade, no slippage."""
     return BacktestConfig(
         start_date=date(2024, 1, 2),
-        end_date=date(2024, 3, 15),
+        end_date=date(2024, 3, 12),
         initial_capital=100_000.0,
         rebalance_freq="monthly",
         commission_fixed=10.0,
