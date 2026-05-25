@@ -160,12 +160,20 @@ class BacktestConfig:
     # True（默认）：与历史行为一致。
     # False：按字面值使用权重，<100% 视为持现金，>100% 视为杠杆并产生警告。
     normalize_weights: bool = True
-    
+    # When does a rebalance trade fill?
+    #   "t_close" (legacy): fill at the same bar's close — fast, but allows lookahead
+    #   "t_open"  (default): fill at next bar's open — robust, the strategy can't see the fill price
+    fill_timing: str = "t_open"
+
     def __post_init__(self):
         if self.start_date is None:
             self.start_date = date.today() - timedelta(days=365*3)
         if self.end_date is None:
             self.end_date = date.today()
+        if self.fill_timing not in ("t_open", "t_close"):
+            raise ValueError(
+                f"fill_timing must be 't_open' or 't_close', got {self.fill_timing!r}"
+            )
 
 
 @dataclass
