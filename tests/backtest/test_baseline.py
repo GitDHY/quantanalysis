@@ -4,27 +4,11 @@ Baseline smoke test for BacktestEngine.run_dynamic.
 Exercises the engine end-to-end against synthetic prices via mocked data fetcher.
 Assertions are pinned to the AAA-only buy-and-hold case, which is invariant
 across the cash-ledger and t+1 fill fixes that follow in Tasks 5 and 9.
-Also exposes the `_dummy_coverage` helper for downstream test files.
 """
 
 from unittest.mock import patch
-from backtest.engine import BacktestEngine, DataValidationResult
-
-
-def _dummy_coverage(prices_df):
-    """Minimal DataValidationResult that passes is_valid checks."""
-    return DataValidationResult(
-        is_valid=True,
-        has_warnings=False,
-        all_tickers_have_full_coverage=True,
-        coverage_info={},
-        effective_start_date=prices_df.index[0].date(),
-        effective_end_date=prices_df.index[-1].date(),
-        excluded_tickers=[],
-        partial_tickers=[],
-        full_coverage_tickers=list(prices_df.columns),
-        warnings=[],
-    )
+from backtest.engine import BacktestEngine
+from tests._helpers import dummy_coverage
 
 
 def test_run_dynamic_returns_result(synthetic_prices, cost_free_config):
@@ -39,7 +23,7 @@ def test_run_dynamic_returns_result(synthetic_prices, cost_free_config):
     ), patch.object(
         engine,
         "validate_data_coverage",
-        return_value=_dummy_coverage(synthetic_prices),
+        return_value=dummy_coverage(synthetic_prices),
     ):
         def hold_aaa(ctx, _):
             return {"AAA": 100.0, "BBB": 0.0}
