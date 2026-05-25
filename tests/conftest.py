@@ -38,7 +38,7 @@ def cost_free_config() -> BacktestConfig:
     """Backtest config with all transaction costs zeroed."""
     return BacktestConfig(
         start_date=date(2024, 1, 2),
-        end_date=date(2024, 3, 12),
+        end_date=date(2024, 3, 11),
         initial_capital=100_000.0,
         rebalance_freq="monthly",
         commission_fixed=0.0,
@@ -53,7 +53,7 @@ def fixed_cost_config() -> BacktestConfig:
     """Backtest config with $10 fixed commission per trade, no slippage."""
     return BacktestConfig(
         start_date=date(2024, 1, 2),
-        end_date=date(2024, 3, 12),
+        end_date=date(2024, 3, 11),
         initial_capital=100_000.0,
         rebalance_freq="monthly",
         commission_fixed=10.0,
