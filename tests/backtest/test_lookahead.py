@@ -1,29 +1,25 @@
 """
 Item 5: t+1 fill semantics + lookahead red-team test.
 
-A "perfect foresight" strategy — one that picks tomorrow's best performer —
-must NOT achieve super-normal returns under correct fill semantics. If it does,
-the strategy is filling at the same bar it sees, which is lookahead.
+A perfect-foresight strategy that peeks at the next bar's prices to pick the
+winner SHOULD outperform when fills happen at the same bar (legacy `t_close`
+behavior — lookahead succeeds). Under proper `t_open` semantics — fills happen
+at the bar AFTER the decision — that lookahead is blunted: the strategy can't
+trade at the prices it peeked at, so the foresight value disappears.
+
+This test compares the same strategy under both fill modes and asserts that
+`t_close` produces a measurably higher return than `t_open`. While Task 9 is
+pending the engine ignores `fill_timing`, both branches produce the same
+number, and the assertion fails (RED). Task 9 wires fill_timing and the
+assertion becomes true.
 """
 
 import pytest
-from datetime import date
-from unittest.mock import patch
 from backtest.engine import BacktestEngine, BacktestConfig
-from tests._helpers import dummy_coverage
+from tests._helpers import run_backtest
 
 
-def _run(engine, prices, strategy_func):
-    with patch.object(engine.data_fetcher, "fetch_prices", return_value=prices), \
-         patch.object(engine, "validate_data_coverage", return_value=dummy_coverage(prices)):
-        return engine.run_dynamic(
-            tickers=list(prices.columns),
-            initial_weights={prices.columns[0]: 100},
-            strategy_func=strategy_func,
-        )
-
-
-def _zero_cost_t_open(start, end):
+def _zero_cost_config(start, end, *, fill_timing: str):
     return BacktestConfig(
         start_date=start,
         end_date=end,
@@ -33,72 +29,63 @@ def _zero_cost_t_open(start, end):
         commission_pct=0.0,
         slippage_pct=0.0,
         normalize_weights=True,
-        fill_timing="t_open",
+        fill_timing=fill_timing,
     )
 
 
-def test_perfect_foresight_no_supernormal_under_t_open(synthetic_prices):
+def _make_perfect_foresight(prices_df):
+    """Return a strategy func that picks tomorrow's best performer.
+
+    The strategy CHEATS by peeking at i+1's prices when deciding at bar i.
+    Under t_close fill, this cheat is realized (engine fills at bar i's close
+    of the asset that's about to win). Under t_open fill, the cheat is wasted
+    (engine fills at i+1's price, by which time the peek is stale info).
     """
-    A strategy that always picks the next bar's best performer should produce
-    a return roughly equal to the average of (best-of-2 next-bar return),
-    NOT a return that uses today's already-known close.
-
-    Today (t_close fill, the default the legacy engine uses) the strategy
-    earns this bar's already-realized return — much higher.
-    With t+1 fill (Task 9), the perfect-foresight gain is bounded by the
-    next-bar realized return.
-
-    This test is RED until Task 9 lands.
-    """
-    cfg = _zero_cost_t_open(
-        synthetic_prices.index[0].date(),
-        synthetic_prices.index[-1].date(),
-    )
-    engine = BacktestEngine(cfg)
-
     def perfect_foresight(ctx, d):
-        all_prices = synthetic_prices  # closure capture for test
         try:
-            today_idx = all_prices.index.get_loc(d)
+            today_idx = prices_df.index.get_loc(d)
         except KeyError:
-            today_idx = all_prices.index.searchsorted(d)
-        if today_idx + 1 >= len(all_prices):
+            today_idx = prices_df.index.searchsorted(d)
+        if today_idx + 1 >= len(prices_df):
             return None
-        today = all_prices.iloc[today_idx]
-        tomorrow = all_prices.iloc[today_idx + 1]
-        winner = max(all_prices.columns, key=lambda t: tomorrow[t] / today[t])
-        return {t: (100.0 if t == winner else 0.0) for t in all_prices.columns}
+        today = prices_df.iloc[today_idx]
+        tomorrow = prices_df.iloc[today_idx + 1]
+        winner = max(prices_df.columns, key=lambda t: tomorrow[t] / today[t])
+        return {t: (100.0 if t == winner else 0.0) for t in prices_df.columns}
+    return perfect_foresight
 
-    result = _run(engine, synthetic_prices, perfect_foresight)
-    final_return = (result.portfolio_values.iloc[-1] / cfg.initial_capital) - 1
 
-    # Honest perfect-foresight ceiling: each bar earn the WINNER's NEXT-bar return
-    n = len(synthetic_prices)
-    rets = []
-    for i in range(n - 1):
-        today = synthetic_prices.iloc[i]
-        tomorrow = synthetic_prices.iloc[i + 1]
-        best = max(synthetic_prices.columns, key=lambda t: tomorrow[t] / today[t])
-        rets.append(tomorrow[best] / today[best] - 1)
-    ceiling = 1.0
-    for r in rets:
-        ceiling *= (1 + r)
-    ceiling -= 1
+def test_t_open_blunts_lookahead_compared_to_t_close(synthetic_prices):
+    """Same perfect-foresight strategy under t_close vs t_open: t_close MUST
+    out-return t_open by a measurable margin once t+1 fills land."""
+    start = synthetic_prices.index[0].date()
+    end = synthetic_prices.index[-1].date()
+    strategy = _make_perfect_foresight(synthetic_prices)
 
-    rel_err = abs(final_return - ceiling) / max(abs(ceiling), 1e-6)
-    assert rel_err < 0.02, (
-        f"Lookahead detected: realized {final_return*100:.2f}% vs honest "
-        f"perfect-foresight ceiling {ceiling*100:.2f}% (rel err {rel_err*100:.1f}%)"
+    cfg_close = _zero_cost_config(start, end, fill_timing="t_close")
+    cfg_open = _zero_cost_config(start, end, fill_timing="t_open")
+
+    r_close = run_backtest(BacktestEngine(cfg_close), synthetic_prices, strategy)
+    r_open = run_backtest(BacktestEngine(cfg_open), synthetic_prices, strategy)
+
+    final_close = r_close.portfolio_values.iloc[-1]
+    final_open = r_open.portfolio_values.iloc[-1]
+
+    # 0.1% margin: enough to detect "lookahead value removed", small enough
+    # to avoid false positives if t+1 itself has a tiny constant edge from
+    # one-bar timing on the very first or last decision.
+    assert final_close > final_open * 1.001, (
+        f"Lookahead value not removed by t_open: "
+        f"t_close final=${final_close:.2f}, t_open final=${final_open:.2f}"
     )
 
 
-def test_t_open_fill_uses_next_bar(synthetic_prices):
-    """The first non-initial trade's fill must occur on a bar STRICTLY AFTER the
-    decision bar, when fill_timing='t_open'."""
-    cfg = _zero_cost_t_open(
-        synthetic_prices.index[0].date(),
-        synthetic_prices.index[-1].date(),
-    )
+def test_t_open_fill_strictly_after_decision(synthetic_prices):
+    """Under fill_timing='t_open', a rebalance trade's fill date must be
+    STRICTLY AFTER the decision date that produced it."""
+    start = synthetic_prices.index[0].date()
+    end = synthetic_prices.index[-1].date()
+    cfg = _zero_cost_config(start, end, fill_timing="t_open")
     engine = BacktestEngine(cfg)
 
     seen_dates = []
@@ -106,7 +93,7 @@ def test_t_open_fill_uses_next_bar(synthetic_prices):
         seen_dates.append(d)
         return {t: 50.0 for t in ctx.tickers}
 
-    result = _run(engine, synthetic_prices, force_50_50)
+    result = run_backtest(engine, synthetic_prices, force_50_50)
 
     rebalance_trades = [t for t in result.trades if t.date != synthetic_prices.index[0].date()]
     assert len(rebalance_trades) > 0, "no rebalance trades produced"
@@ -118,5 +105,5 @@ def test_t_open_fill_uses_next_bar(synthetic_prices):
 
     assert first_trade.date > decision_date, (
         f"fill at {first_trade.date} but decision was at {decision_date} — "
-        f"same-bar fill detected"
+        f"same-bar fill detected (fill_timing='t_open' not honored)"
     )

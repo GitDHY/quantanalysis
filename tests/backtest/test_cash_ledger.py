@@ -9,19 +9,8 @@ These tests verify that:
 """
 
 import pytest
-from unittest.mock import patch
 from backtest.engine import BacktestEngine
-from tests._helpers import dummy_coverage
-
-
-def _run(engine, prices, strategy_func):
-    with patch.object(engine.data_fetcher, "fetch_prices", return_value=prices), \
-         patch.object(engine, "validate_data_coverage", return_value=dummy_coverage(prices)):
-        return engine.run_dynamic(
-            tickers=list(prices.columns),
-            initial_weights={prices.columns[0]: 100},
-            strategy_func=strategy_func,
-        )
+from tests._helpers import dummy_coverage, run_backtest
 
 
 def _alternating_50_50(ctx, _d):
@@ -41,7 +30,7 @@ def test_zero_cost_preserves_equity(synthetic_prices, cost_free_config):
     (which it must not).
     """
     engine = BacktestEngine(cost_free_config)
-    result = _run(engine, synthetic_prices, _alternating_50_50)
+    result = run_backtest(engine, synthetic_prices, _alternating_50_50)
 
     expected = 145_271.4470  # from BacktestEngine(cost_free_config).run_dynamic(...) at HEAD before Task 5; if Task 5 changes this value the zero-cost path is no longer a no-op.
     final_value = result.portfolio_values.iloc[-1]
@@ -60,8 +49,8 @@ def test_fixed_cost_subtracts_from_equity(synthetic_prices, cost_free_config, fi
     engine_zero = BacktestEngine(cost_free_config)
     engine_cost = BacktestEngine(fixed_cost_config)
 
-    result_zero = _run(engine_zero, synthetic_prices, _alternating_50_50)
-    result_cost = _run(engine_cost, synthetic_prices, _alternating_50_50)
+    result_zero = run_backtest(engine_zero, synthetic_prices, _alternating_50_50)
+    result_cost = run_backtest(engine_cost, synthetic_prices, _alternating_50_50)
 
     total_costs = sum(t.cost for t in result_cost.trades)
     assert total_costs > 0, "test setup error: no trades incurred cost"
@@ -87,7 +76,7 @@ def test_total_value_invariant(synthetic_prices, fixed_cost_config):
     This requires exposing cash + positions per step — added in Task 4.
     """
     engine = BacktestEngine(fixed_cost_config)
-    result = _run(engine, synthetic_prices, _alternating_50_50)
+    result = run_backtest(engine, synthetic_prices, _alternating_50_50)
 
     # New attribute introduced in Task 5: result.equity_breakdown is a list of dicts.
     assert hasattr(result, "equity_breakdown"), \
@@ -113,7 +102,7 @@ def test_cash_never_negative_without_leverage_flag(synthetic_prices, fixed_cost_
     Negative cash means leverage and should require an explicit opt-in.
     """
     engine = BacktestEngine(fixed_cost_config)
-    result = _run(engine, synthetic_prices, _alternating_50_50)
+    result = run_backtest(engine, synthetic_prices, _alternating_50_50)
 
     assert len(result.equity_breakdown) > 0, "equity_breakdown must not be empty"
 
