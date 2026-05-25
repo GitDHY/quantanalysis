@@ -287,18 +287,19 @@ class BacktestEngine:
         trade_value_signed = target_value - current_value
         trade_value = abs(trade_value_signed)
 
-        if trade_value < 100:  # Skip tiny trades
+        if trade_value < self.cost_model.config.min_trade_value:
             return positions, cash, 0.0, None
 
         cost = self.cost_model.calculate_total_cost(trade_value, price)
+        shares = trade_value / price
 
         positions = dict(positions)  # don't mutate caller's dict in place
-        if trade_value_signed > 0:  # Buy
-            positions[ticker] = positions.get(ticker, 0) + trade_value / price
+        if trade_value_signed > 0:
+            positions[ticker] = positions.get(ticker, 0) + shares
             cash -= (trade_value + cost)
             action = "BUY"
-        else:  # Sell
-            positions[ticker] = max(0, positions.get(ticker, 0) - trade_value / price)
+        else:
+            positions[ticker] = max(0, positions.get(ticker, 0) - shares)
             cash += (trade_value - cost)
             action = "SELL"
 
@@ -306,7 +307,7 @@ class BacktestEngine:
             date=None,  # caller fills this in
             ticker=ticker,
             action=action,
-            shares=trade_value / price,
+            shares=shares,
             price=price,
             value=trade_value,
             cost=cost,
