@@ -208,7 +208,9 @@ class BacktestResult:
     effective_end_date: Optional[date] = None
     # 回测期间累积的非致命警告（例如关闭归一化时目标权重 >100% 的杠杆提醒）
     warnings: List[str] = field(default_factory=list)
-    
+    # Per-step ledger snapshots: list of {date, total_value, cash, positions, prices}
+    equity_breakdown: List[Dict[str, Any]] = field(default_factory=list)
+
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame."""
         if not self.trades:
@@ -750,28 +752,36 @@ class BacktestEngine:
         first_date = backtest_prices.index[0]
         first_prices = backtest_prices.iloc[0]
         
+        # Track total spent for cash residual calc below
+        total_spent = 0.0
+
         for ticker in available:
             weight = current_weights.get(ticker, 0) / 100
             if weight > 0:
                 value_to_invest = cash * weight
                 price = first_prices[ticker]
-                shares = value_to_invest / price
                 cost = self.cost_model.calculate_total_cost(value_to_invest, price)
-                
+                shares = (value_to_invest - cost) / price  # cost reduces what we can buy
+
                 positions[ticker] = shares
-                
+                total_spent += value_to_invest  # cash outflow = allocated value (cost is implicit in fewer shares)
+
                 trades.append(Trade(
                     date=first_date.date() if hasattr(first_date, 'date') else first_date,
                     ticker=ticker,
                     action='BUY',
                     shares=shares,
                     price=price,
-                    value=value_to_invest,
+                    value=value_to_invest - cost,
                     cost=cost,
                 ))
-        
-        cash = 0  # All invested
-        
+
+        # Real cash residual: anything not allocated to a ticker stays as cash
+        # (e.g., normalize_weights=False with weights summing to <100)
+        cash = cash - total_spent
+
+        equity_breakdown: List[Dict[str, Any]] = []
+
         # Simulate through time
         for idx, row in backtest_prices.iterrows():
             current_date = idx.date() if hasattr(idx, 'date') else idx
@@ -788,6 +798,14 @@ class BacktestEngine:
                     total_value += value
             
             portfolio_values.append({'date': idx, 'value': total_value})
+
+            equity_breakdown.append({
+                'date': idx,
+                'total_value': total_value,
+                'cash': cash,
+                'positions': dict(positions),
+                'prices': {t: row[t] for t in available if t in row},
+            })
             
             # Calculate current weights
             if total_value > 0:
@@ -838,49 +856,50 @@ class BacktestEngine:
                         elif target_total <= 0:
                             continue  # 全 0 跳过本次调仓
                     
-                    # Execute rebalancing trades
+                    # Estimate total commissions for this rebalance to shrink target basis
+                    expected_total_commission = 0.0
                     for ticker in available:
                         current_w = current_weights.get(ticker, 0)
                         target_w = target_weights.get(ticker, 0)
-                        
-                        diff = target_w - current_w
-                        
-                        # Skip small changes
-                        if abs(diff) < 1.0:  # Less than 1% change
+                        if abs(target_w - current_w) < 1.0:
                             continue
-                        
+                        initial_target = total_value * (target_w / 100)
+                        initial_current = position_values.get(ticker, 0)
+                        initial_trade_value = abs(initial_target - initial_current)
+                        if initial_trade_value < self.cost_model.config.min_trade_value:
+                            continue
+                        expected_total_commission += self.cost_model.calculate_total_cost(
+                            initial_trade_value, row[ticker]
+                        )
+
+                    # Shrink target basis so commissions don't push cash negative.
+                    # If commissions are 0, this is a no-op (preserves zero-cost equity curve).
+                    target_basis = total_value - expected_total_commission
+
+                    # Execute rebalancing trades via the cash-aware helper
+                    for ticker in available:
+                        current_w = current_weights.get(ticker, 0)
+                        target_w = target_weights.get(ticker, 0)
+
+                        if abs(target_w - current_w) < 1.0:  # Less than 1% change
+                            continue
+
                         price = row[ticker]
+                        target_value = target_basis * (target_w / 100)
                         current_value = position_values.get(ticker, 0)
-                        target_value = total_value * (target_w / 100)
-                        trade_value = target_value - current_value
-                        
-                        if abs(trade_value) < 100:  # Skip tiny trades
-                            continue
-                        
-                        # Calculate trade
-                        shares_change = trade_value / price
-                        cost = self.cost_model.calculate_total_cost(abs(trade_value), price)
-                        
-                        if trade_value > 0:  # Buy
-                            positions[ticker] = positions.get(ticker, 0) + shares_change
-                            action = 'BUY'
-                        else:  # Sell
-                            positions[ticker] = max(0, positions.get(ticker, 0) + shares_change)
-                            action = 'SELL'
-                        
-                        trades.append(Trade(
-                            date=current_date,
+
+                        positions, cash, cost, trade = self._apply_trade(
+                            positions=positions,
+                            cash=cash,
                             ticker=ticker,
-                            action=action,
-                            shares=abs(shares_change),
+                            target_value=target_value,
+                            current_value=current_value,
                             price=price,
-                            value=abs(trade_value),
-                            cost=cost,
-                        ))
-                        
-                        # Deduct cost from portfolio
-                        # (simplified - in reality would affect cash)
-                    
+                        )
+                        if trade is not None:
+                            trade.date = current_date
+                            trades.append(trade)
+
                     current_weights = target_weights
                     
                 except Exception as e:
@@ -938,6 +957,7 @@ class BacktestEngine:
             effective_end_date=effective_end,
             # 杠杆/归一化相关的累积警告（仅保留前 20 条，避免过长）
             warnings=_backtest_warnings[:20],
+            equity_breakdown=equity_breakdown,
         )
     
     def run_with_code(
