@@ -32,7 +32,7 @@ def test_zero_cost_preserves_equity(synthetic_prices, cost_free_config):
     engine = BacktestEngine(cost_free_config)
     result = run_backtest(engine, synthetic_prices, _alternating_50_50)
 
-    expected = 145_271.4470  # from BacktestEngine(cost_free_config).run_dynamic(...) at HEAD before Task 5; if Task 5 changes this value the zero-cost path is no longer a no-op.
+    expected = 144_657.6868  # regenerated under t_open default at Task 9 HEAD
     final_value = result.portfolio_values.iloc[-1]
     assert abs(final_value - expected) < 1.0, (
         f"Zero-cost engine drifted from legacy reference: "
