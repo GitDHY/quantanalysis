@@ -160,12 +160,20 @@ class BacktestConfig:
     # True（默认）：与历史行为一致。
     # False：按字面值使用权重，<100% 视为持现金，>100% 视为杠杆并产生警告。
     normalize_weights: bool = True
-    
+    # When does a rebalance trade fill?
+    #   "t_close" (legacy): fill at the same bar's close — fast, but allows lookahead
+    #   "t_open"  (default): fill at next bar's open — robust, the strategy can't see the fill price
+    fill_timing: str = "t_open"
+
     def __post_init__(self):
         if self.start_date is None:
             self.start_date = date.today() - timedelta(days=365*3)
         if self.end_date is None:
             self.end_date = date.today()
+        if self.fill_timing not in ("t_open", "t_close"):
+            raise ValueError(
+                f"fill_timing must be 't_open' or 't_close', got {self.fill_timing!r}"
+            )
 
 
 @dataclass
@@ -208,7 +216,9 @@ class BacktestResult:
     effective_end_date: Optional[date] = None
     # 回测期间累积的非致命警告（例如关闭归一化时目标权重 >100% 的杠杆提醒）
     warnings: List[str] = field(default_factory=list)
-    
+    # Per-step ledger snapshots: list of {date, total_value, cash, positions, prices}
+    equity_breakdown: List[Dict[str, Any]] = field(default_factory=list)
+
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame."""
         if not self.trades:
@@ -255,7 +265,135 @@ class BacktestEngine:
         # Initialize metrics calculator
         metrics_config = MetricsConfig(risk_free_rate=self.config.risk_free_rate)
         self.metrics = PerformanceMetrics(metrics_config)
-    
+
+    def _apply_trade(
+        self,
+        *,
+        positions: Dict[str, float],
+        cash: float,
+        ticker: str,
+        target_value: float,
+        current_value: float,
+        price: float,
+    ) -> "tuple[Dict[str, float], float, float, Optional[Trade]]":
+        """
+        Execute one rebalancing trade and return updated (positions, cash, cost, trade).
+
+        Cash semantics:
+            Buy:  cash -= (trade_value + cost)   shares += trade_value / price
+            Sell: cash += (trade_value - cost)   shares -= trade_value / price
+            (trade_value here is the absolute notional moved.)
+
+        The returned ``trade`` has ``date=None`` — the caller must overwrite it
+        before appending to a ``trades`` list. ``Trade.to_dict()`` already
+        tolerates non-``date`` values via ``str(self.date)``, so a missed
+        overwrite degrades gracefully rather than crashing, but callers should
+        still set the date for correctness.
+
+        Returns ``(positions, cash, cost, trade_or_None)``. ``trade_or_None`` is
+        ``None`` when the trade was filtered out (notional below the dust
+        threshold).
+        """
+        trade_value_signed = target_value - current_value
+        trade_value = abs(trade_value_signed)
+
+        if trade_value < self.cost_model.config.min_trade_value:
+            return positions, cash, 0.0, None
+
+        cost = self.cost_model.calculate_total_cost(trade_value, price)
+        shares = trade_value / price
+
+        positions = dict(positions)  # don't mutate caller's dict in place
+        if trade_value_signed > 0:
+            positions[ticker] = positions.get(ticker, 0) + shares
+            cash -= (trade_value + cost)
+            action = "BUY"
+        else:
+            positions[ticker] = max(0, positions.get(ticker, 0) - shares)
+            cash += (trade_value - cost)
+            action = "SELL"
+
+        trade = Trade(
+            date=None,  # caller fills this in
+            ticker=ticker,
+            action=action,
+            shares=shares,
+            price=price,
+            value=trade_value,
+            cost=cost,
+        )
+        return positions, cash, cost, trade
+
+    def _execute_rebalance_trades(
+        self,
+        *,
+        positions: Dict[str, float],
+        cash: float,
+        total_value: float,
+        position_values: Dict[str, float],
+        current_weights: Dict[str, float],
+        target_weights: Dict[str, float],
+        available: List[str],
+        prices_row,  # pd.Series indexed by ticker
+        trades_list: List["Trade"],
+        fill_date: date,
+    ) -> "tuple[Dict[str, float], float]":
+        """Execute one rebalance using commission-aware target sizing.
+
+        Phase A: estimate total commission across all tickers crossing the 1% /
+            dust thresholds.
+        Phase B: shrink target_basis = total_value - expected_total_commission
+            (clamped at zero) so cash doesn't go negative due to commission
+            overhead.
+        Phase C: execute each per-ticker trade via ``_apply_trade`` and append
+            to ``trades_list`` with ``fill_date``.
+
+        Returns updated ``(positions, cash)``.
+        """
+        # Phase A: estimate commissions on the initial target sizing
+        expected_total_commission = 0.0
+        for ticker in available:
+            current_w = current_weights.get(ticker, 0)
+            target_w = target_weights.get(ticker, 0)
+            if abs(target_w - current_w) < 1.0:
+                continue
+            initial_target = total_value * (target_w / 100)
+            initial_current = position_values.get(ticker, 0)
+            initial_trade_value = abs(initial_target - initial_current)
+            if initial_trade_value < self.cost_model.config.min_trade_value:
+                continue
+            expected_total_commission += self.cost_model.calculate_total_cost(
+                initial_trade_value, prices_row[ticker]
+            )
+
+        # Phase B: shrink target basis (no-op when commissions are 0).
+        # Clamp at zero to guard against pathological commission overhead
+        # exceeding equity (small bonus correctness fix).
+        target_basis = max(0.0, total_value - expected_total_commission)
+
+        # Phase C: execute trades
+        for ticker in available:
+            current_w = current_weights.get(ticker, 0)
+            target_w = target_weights.get(ticker, 0)
+            if abs(target_w - current_w) < 1.0:
+                continue
+            price = prices_row[ticker]
+            target_value = target_basis * (target_w / 100)
+            current_value = position_values.get(ticker, 0)
+            positions, cash, _cost, trade = self._apply_trade(
+                positions=positions,
+                cash=cash,
+                ticker=ticker,
+                target_value=target_value,
+                current_value=current_value,
+                price=price,
+            )
+            if trade is not None:
+                trade.date = fill_date
+                trades_list.append(trade)
+
+        return positions, cash
+
     def validate_data_coverage(
         self,
         tickers: List[str],
@@ -692,28 +830,41 @@ class BacktestEngine:
         first_date = backtest_prices.index[0]
         first_prices = backtest_prices.iloc[0]
         
+        # Track total spent for cash residual calc below
+        total_spent = 0.0
+
         for ticker in available:
             weight = current_weights.get(ticker, 0) / 100
             if weight > 0:
                 value_to_invest = cash * weight
                 price = first_prices[ticker]
-                shares = value_to_invest / price
                 cost = self.cost_model.calculate_total_cost(value_to_invest, price)
-                
+                shares = (value_to_invest - cost) / price  # cost reduces what we can buy
+
                 positions[ticker] = shares
-                
+                total_spent += value_to_invest  # cash outflow = allocated value (cost is implicit in fewer shares)
+
                 trades.append(Trade(
                     date=first_date.date() if hasattr(first_date, 'date') else first_date,
                     ticker=ticker,
                     action='BUY',
                     shares=shares,
                     price=price,
-                    value=value_to_invest,
+                    value=value_to_invest - cost,
                     cost=cost,
                 ))
-        
-        cash = 0  # All invested
-        
+
+        # Real cash residual: anything not allocated to a ticker stays as cash
+        # (e.g., normalize_weights=False with weights summing to <100)
+        cash = cash - total_spent
+
+        equity_breakdown: List[Dict[str, Any]] = []
+
+        # Deferred-fill state for fill_timing="t_open": a decision made at bar i
+        # produces target weights that are stashed here, then executed at bar i+1.
+        pending_target_weights: Optional[Dict[str, float]] = None
+        pending_decision_date: Optional[date] = None
+
         # Simulate through time
         for idx, row in backtest_prices.iterrows():
             current_date = idx.date() if hasattr(idx, 'date') else idx
@@ -730,6 +881,14 @@ class BacktestEngine:
                     total_value += value
             
             portfolio_values.append({'date': idx, 'value': total_value})
+
+            equity_breakdown.append({
+                'date': idx,
+                'total_value': total_value,
+                'cash': cash,
+                'positions': dict(positions),
+                'prices': {t: row[t] for t in available if t in row},
+            })
             
             # Calculate current weights
             if total_value > 0:
@@ -740,13 +899,46 @@ class BacktestEngine:
                 'date': idx,
                 **{t: current_weights.get(t, 0) for t in available}
             })
-            
-            # Check if rebalancing date
+
+            # STAGE 1: execute deferred fill from a prior decision (t_open only).
+            # The decision was made at the PREVIOUS rebalance bar using prices up to
+            # that bar; the fill happens NOW at this bar's prices, using the same
+            # commission-aware sizing as the legacy t_close path.
+            #
+            # NOTE: fill_date is set to ``idx + 1us`` so it is strictly after the
+            # bar's nominal timestamp. This represents "fill at the open of this
+            # bar, slightly after the prior bar's close where the decision was
+            # made". It also makes Trade.date strictly greater than seen decision
+            # timestamps for the same bar (where Stage 2 still records a new
+            # decision after Stage 1's fill), preserving the t+1 invariant.
+            if pending_target_weights is not None and cfg.fill_timing == "t_open":
+                fill_ts = idx + pd.Timedelta(microseconds=1) if hasattr(idx, "__add__") else idx
+                positions, cash = self._execute_rebalance_trades(
+                    positions=positions,
+                    cash=cash,
+                    total_value=total_value,
+                    position_values=position_values,
+                    current_weights=current_weights,
+                    target_weights=pending_target_weights,
+                    available=available,
+                    prices_row=row,
+                    trades_list=trades,
+                    fill_date=fill_ts,
+                )
+                # Treat current_weights as the engine's INTENT (the same way the
+                # legacy t_close path does). The dust/1% filter may skip some
+                # tickers so realized weights can drift slightly — that subtlety
+                # is consistent with the pre-Task-9 behavior.
+                current_weights = pending_target_weights
+                pending_target_weights = None
+                pending_decision_date = None
+
+            # STAGE 2: decision (rebalance bar)
             if idx in rebalance_dates:
                 try:
                     # Create strategy context
                     from strategy.engine import StrategyContext
-                    
+
                     ctx = StrategyContext(
                         tickers=available,
                         current_weights=current_weights,
@@ -755,19 +947,19 @@ class BacktestEngine:
                         lookback_days=252,
                         normalize_weights=cfg.normalize_weights,
                     )
-                    
+
                     # Execute strategy
-                    target_weights = strategy_func(ctx, current_date)
-                    
+                    target_weights = strategy_func(ctx, idx)
+
                     if target_weights is None:
                         continue
-                    
+
                     # Normalize target weights (conditioned on config)
                     target_total = sum(target_weights.values())
                     if cfg.normalize_weights:
                         # 历史默认行为：归一化到 100%
                         if target_total > 0:
-                            target_weights = {t: (w / target_total) * 100 
+                            target_weights = {t: (w / target_total) * 100
                                              for t, w in target_weights.items()}
                     else:
                         # 用户关闭归一化：按字面值使用
@@ -779,52 +971,28 @@ class BacktestEngine:
                             _backtest_warnings.append(warn_msg)
                         elif target_total <= 0:
                             continue  # 全 0 跳过本次调仓
-                    
-                    # Execute rebalancing trades
-                    for ticker in available:
-                        current_w = current_weights.get(ticker, 0)
-                        target_w = target_weights.get(ticker, 0)
-                        
-                        diff = target_w - current_w
-                        
-                        # Skip small changes
-                        if abs(diff) < 1.0:  # Less than 1% change
-                            continue
-                        
-                        price = row[ticker]
-                        current_value = position_values.get(ticker, 0)
-                        target_value = total_value * (target_w / 100)
-                        trade_value = target_value - current_value
-                        
-                        if abs(trade_value) < 100:  # Skip tiny trades
-                            continue
-                        
-                        # Calculate trade
-                        shares_change = trade_value / price
-                        cost = self.cost_model.calculate_total_cost(abs(trade_value), price)
-                        
-                        if trade_value > 0:  # Buy
-                            positions[ticker] = positions.get(ticker, 0) + shares_change
-                            action = 'BUY'
-                        else:  # Sell
-                            positions[ticker] = max(0, positions.get(ticker, 0) + shares_change)
-                            action = 'SELL'
-                        
-                        trades.append(Trade(
-                            date=current_date,
-                            ticker=ticker,
-                            action=action,
-                            shares=abs(shares_change),
-                            price=price,
-                            value=abs(trade_value),
-                            cost=cost,
-                        ))
-                        
-                        # Deduct cost from portfolio
-                        # (simplified - in reality would affect cash)
-                    
-                    current_weights = target_weights
-                    
+
+                    if cfg.fill_timing == "t_close":
+                        # Legacy path: fill at THIS bar's prices, same bar as the decision.
+                        positions, cash = self._execute_rebalance_trades(
+                            positions=positions,
+                            cash=cash,
+                            total_value=total_value,
+                            position_values=position_values,
+                            current_weights=current_weights,
+                            target_weights=target_weights,
+                            available=available,
+                            prices_row=row,
+                            trades_list=trades,
+                            fill_date=idx,
+                        )
+                        current_weights = target_weights
+                    else:
+                        # t_open: defer the fill to the next bar so the strategy
+                        # cannot trade at prices it just looked at.
+                        pending_target_weights = target_weights
+                        pending_decision_date = current_date
+
                 except Exception as e:
                     # Strategy error - continue with current weights
                     # 同时把异常记录到 warnings，便于在 UI/日志里定位"静默失败"的情况
@@ -837,7 +1005,15 @@ class BacktestEngine:
                     except Exception:
                         # 记录异常本身不能再抛异常影响主流程
                         pass
-        
+
+        # If t_open had a pending decision on the LAST bar, there is no next bar
+        # to fill on. Log a warning and discard the pending weights.
+        if pending_target_weights is not None:
+            _backtest_warnings.append(
+                f"⚠️ [{pending_decision_date}] 决策落在回测最后一根 bar，"
+                f"无下一根可成交，已跳过。"
+            )
+
         # Convert to Series/DataFrame
         values_df = pd.DataFrame(portfolio_values)
         portfolio_series = pd.Series(
@@ -880,6 +1056,7 @@ class BacktestEngine:
             effective_end_date=effective_end,
             # 杠杆/归一化相关的累积警告（仅保留前 20 条，避免过长）
             warnings=_backtest_warnings[:20],
+            equity_breakdown=equity_breakdown,
         )
     
     def run_with_code(
