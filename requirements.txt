@@ -5,7 +5,10 @@ streamlit-ace>=0.1.1
 
 # Data & Analysis
 yfinance>=0.2.36
-pandas>=2.0.0
+# pandas pinned <2.2 because backtest/engine.py uses the legacy Grouper
+# freq codes ('M', 'Q', 'W'). Pandas 2.2 renamed these to 'ME'/'QE'/'W'.
+# Migrating is tracked separately — see roadmap reproducibility item.
+pandas>=2.0.0,<2.2.0
 numpy>=1.24.0
 pyarrow>=14.0.0
 
