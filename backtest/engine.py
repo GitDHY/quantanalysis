@@ -4,6 +4,8 @@ Backtesting engine for strategy simulation.
 
 import pandas as pd
 import numpy as np
+import hashlib
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any, Callable
@@ -222,6 +224,14 @@ class BacktestResult:
     warnings: List[str] = field(default_factory=list)
     # Per-step ledger snapshots: list of {date, total_value, cash, positions, prices}
     equity_breakdown: List[Dict[str, Any]] = field(default_factory=list)
+    # Reproducibility metadata: enough to verify two BacktestResults were
+    # produced from the same data + library stack. Populated on success;
+    # left at defaults on early-exit failure paths.
+    prices_hash: str = ""
+    bars_count: int = 0
+    pandas_version: str = ""
+    numpy_version: str = ""
+    python_version: str = ""
 
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame."""
@@ -240,6 +250,23 @@ class BacktestResult:
         if self.data_validation is None:
             return []
         return self.data_validation.warnings
+
+
+
+
+def _hash_prices_df(prices: pd.DataFrame) -> str:
+    """MD5 hash that fingerprints a price DataFrame for reproducibility checks.
+
+    Covers column names + order, the index timestamps, and the float values.
+    Two DataFrames with the same logical content (same tickers, same bars,
+    same prices) produce the same hash; any cell change produces a different
+    hash. Used to populate ``BacktestResult.prices_hash``.
+    """
+    h = hashlib.md5()
+    h.update(repr(list(prices.columns)).encode())
+    h.update(np.asarray(prices.index.values).tobytes())
+    h.update(prices.values.tobytes())
+    return h.hexdigest()
 
 
 class BacktestEngine:
@@ -1066,6 +1093,11 @@ class BacktestEngine:
             # 杠杆/归一化相关的累积警告（仅保留前 20 条，避免过长）
             warnings=_backtest_warnings[:20],
             equity_breakdown=equity_breakdown,
+            prices_hash=_hash_prices_df(backtest_prices),
+            bars_count=len(backtest_prices),
+            pandas_version=pd.__version__,
+            numpy_version=np.__version__,
+            python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         )
     
     def run_with_code(
