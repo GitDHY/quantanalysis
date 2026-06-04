@@ -164,6 +164,10 @@ class BacktestConfig:
     #   "t_close" (legacy): fill at the same bar's close — fast, but allows lookahead
     #   "t_open"  (default): fill at next bar's open — robust, the strategy can't see the fill price
     fill_timing: str = "t_open"
+    # Pin numpy's global RNG before strategy execution so any strategy that
+    # uses np.random.* gives reproducible results across runs. None (default)
+    # leaves the RNG untouched (legacy behavior).
+    random_seed: Optional[int] = None
 
     def __post_init__(self):
         if self.start_date is None:
@@ -748,7 +752,12 @@ class BacktestEngine:
             BacktestResult
         """
         cfg = config or self.config
-        
+
+        # Pin numpy's global RNG so strategies that call np.random.* are
+        # reproducible across runs with the same seed. None = leave alone.
+        if cfg.random_seed is not None:
+            np.random.seed(cfg.random_seed)
+
         # Normalize initial weights
         total_weight = sum(initial_weights.values())
         if total_weight == 0:
