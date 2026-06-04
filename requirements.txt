@@ -1,6 +1,12 @@
 # Quant Platform Dependencies
+#
+# Versions follow the convention: lower bound = "tested with this or newer";
+# upper bound = "next major release is known/likely to break us, so cap it".
+# Re-run `pip install -U -r requirements-dev.txt && pytest` before bumping
+# any upper bound — see roadmap reproducibility item.
+
 # Web Framework
-streamlit>=1.30.0
+streamlit>=1.30.0,<2.0.0
 streamlit-ace>=0.1.1
 
 # Data & Analysis
@@ -9,11 +15,14 @@ yfinance>=0.2.36
 # freq codes ('M', 'Q', 'W'). Pandas 2.2 renamed these to 'ME'/'QE'/'W'.
 # Migrating is tracked separately — see roadmap reproducibility item.
 pandas>=2.0.0,<2.2.0
-numpy>=1.24.0
+# numpy <2.0: numpy 2.0 dropped a number of deprecated APIs that pandas
+# 2.0.x and yfinance still rely on transitively. Lift after the pandas bump.
+numpy>=1.24.0,<2.0.0
 pyarrow>=14.0.0
 
 # Visualization
-plotly>=5.18.0
+# plotly 6.0 introduced breaking changes to figure JSON schema; cap until verified.
+plotly>=5.18.0,<6.0.0
 
 # Strategy Sandbox
 RestrictedPython>=6.0
