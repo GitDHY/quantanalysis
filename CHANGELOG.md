@@ -4,6 +4,19 @@
 
 Two fixes to `BacktestEngine.run_dynamic` that change reported numbers (in the conservative direction). Backtest results from this version onward will differ from previous runs.
 
+### Added (CI + reproducibility, post-Phase-2 cleanup)
+
+- **GitHub Actions** workflow (`.github/workflows/test.yml`) runs `pytest tests/ --cov=backtest` on every push and on PRs to `main`. Replaces the vacuous "CI green" claim that existed when no CI ran at all.
+- **`requirements.txt` upper-bound pins** for the dep majors that have known or likely breaking changes: `streamlit<2.0`, `pandas<2.2` (we still use the legacy `Grouper(freq='M')` codes), `numpy<2.0`, `plotly<6.0`. Header comment documents the convention.
+- **`BacktestConfig.random_seed: int | None`** (default `None`). When set, `run_dynamic` calls `np.random.seed(...)` once before the rebalance loop, so any strategy that uses `np.random.*` produces byte-identical results across runs with the same seed. Doesn't affect strategies that don't use the RNG.
+- **`BacktestResult` reproducibility metadata** — five new fields populated on the success path:
+  - `prices_hash: str` — MD5 over the price DataFrame's columns + index + values. Use it to verify "two runs were on the same data" before comparing their numbers.
+  - `bars_count: int` — `len(backtest_prices)`.
+  - `pandas_version`, `numpy_version`, `python_version: str` — runtime stack snapshot.
+- **Tests:**
+  - `tests/backtest/test_reproducibility.py` — same seed → identical equity curve; different seeds → different equity curves.
+  - `tests/backtest/test_data_snapshot.py` — fields exist and are populated; same data → same hash; single-cell change → different hash.
+
 ### Fixed (Item 4 — cash ledger)
 
 Transaction costs (commissions + slippage) now reduce the equity curve. Previously they were summed in `Total Trading Costs ($)` for reporting but never subtracted from `portfolio_values`, so reported Sharpe / total return ignored realistic costs.
