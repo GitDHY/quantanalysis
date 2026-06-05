@@ -26,6 +26,7 @@ Thumbs.db
 
 # Project specific - 敏感数据和缓存
 data/cache/
+data/runs/
 data/scheduler.lock
 data/scheduler_config.json
 data/notification_config.json

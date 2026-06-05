@@ -18,7 +18,7 @@ Persistent history of every backtest run + a 2–4-run side-by-side compare view
 
 ### Tests
 
-- `tests/backtest/test_history.py` (14 tests): save/list/load round-trip, skip-failed-runs, pin/unpin/note/delete, ring-buffer prune, atomic-write invariant, orphan-file handling, run_id collision.
+- `tests/backtest/test_history.py` (18 tests): save/list/load round-trip, skip-failed-runs, pin/unpin/note/delete, ring-buffer prune, atomic-write invariant, orphan-file handling, run_id collision.
 - `tests/ui/test_run_compare.py` (5 tests): pure-function `compute_inputs_diff` cases.
 
 ### Migration

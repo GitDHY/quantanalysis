@@ -265,9 +265,13 @@ def test_orphan_summary_load_detail_raises_clearly(store, tmp_path):
 
 
 def test_orphan_detail_pruned_when_summary_deleted(store, tmp_path):
+    """If the user manually deletes the summary file, the detail file
+    becomes an orphan. _prune() should reclaim it on next call (e.g.
+    on the next save()), per spec §8."""
     rid = store.save(_make_fake_result(), mode="dynamic", name="x",
                      strategy_code="def s(): pass")
     (tmp_path / f"{rid}.summary.json").unlink()
+    assert (tmp_path / f"{rid}.detail.json").exists()  # still orphaned
 
-    store.delete(rid)
+    store._prune()
     assert not (tmp_path / f"{rid}.detail.json").exists()

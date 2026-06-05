@@ -79,11 +79,26 @@ def render_history_list(store: RunHistoryStore) -> List[str]:
         with cols[3]:
             st.text(s.name)
         with cols[4]:
-            sharpe = s.metrics.get("sharpe_ratio") or s.metrics.get("sharpe")
+            # PerformanceMetrics emits "Sharpe Ratio"; tests/older saves
+            # may use lowercase variants. Try in production-first order.
+            sharpe = (
+                s.metrics.get("Sharpe Ratio")
+                or s.metrics.get("sharpe_ratio")
+                or s.metrics.get("sharpe")
+            )
             st.text(f"Sharpe {sharpe:.2f}" if sharpe is not None else "")
         with cols[5]:
-            tr = s.metrics.get("total_return")
-            st.text(f"{tr:+.1%}" if tr is not None else "")
+            # PerformanceMetrics emits "Total Return (%)" already in
+            # percent units (152.0 for +152%); test fixtures often use
+            # "total_return" as a fraction (1.52). Disambiguate here.
+            tr_pct = s.metrics.get("Total Return (%)")
+            tr_frac = s.metrics.get("total_return")
+            if tr_pct is not None:
+                st.text(f"{tr_pct:+.1f}%")
+            elif tr_frac is not None:
+                st.text(f"{tr_frac:+.1%}")
+            else:
+                st.text("")
         with cols[6]:
             new_note = st.text_input(
                 "", value=s.note, key=f"note_{s.id}",

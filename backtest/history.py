@@ -334,8 +334,13 @@ class RunHistoryStore:
         _atomic_write_json(path, raw)
 
     def _prune(self) -> None:
-        """Keep all pinned + max_unpinned most-recent unpinned. Delete
-        the rest (both summary and detail files)."""
+        """Keep all pinned + max_unpinned most-recent unpinned. Reclaim
+        any orphan detail files (detail.json with no matching summary).
+
+        Called from save() BEFORE adding the new run, so the on-disk
+        steady state is bounded by max_unpinned + 1 between the prune
+        check and the post-save state. Verified by the test suite.
+        """
         all_summaries = self.list_summaries()
         unpinned = [s for s in all_summaries if not s.pinned]
         # list_summaries returns descending by created_at, so unpinned[max_unpinned:]
@@ -343,3 +348,11 @@ class RunHistoryStore:
         to_drop = unpinned[self.max_unpinned :]
         for s in to_drop:
             self.delete(s.id)
+
+        # Reclaim orphan detail files (no matching summary on disk).
+        live_summary_ids = {p.name.removesuffix(".summary.json")
+                            for p in self.runs_dir.glob("*.summary.json")}
+        for detail_path in self.runs_dir.glob("*.detail.json"):
+            rid = detail_path.name.removesuffix(".detail.json")
+            if rid not in live_summary_ids:
+                detail_path.unlink()
