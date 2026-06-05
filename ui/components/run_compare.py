@@ -97,3 +97,56 @@ def render_history_list(store: RunHistoryStore) -> List[str]:
                 st.rerun()
 
     return selected_ids
+
+
+def render_detail(run_id: str, store: RunHistoryStore) -> None:
+    """Render a single run's detail view. Lazy-loads the detail.json."""
+    summaries_by_id = {s.id: s for s in store.list_summaries()}
+    summary = summaries_by_id.get(run_id)
+    if summary is None:
+        st.error(f"找不到 run_id={run_id}")
+        return
+
+    st.subheader(f"📊 {summary.name} — {summary.created_at:%Y-%m-%d %H:%M}")
+    if summary.note:
+        st.caption(f"📝 {summary.note}")
+
+    try:
+        detail = store.load_detail(run_id)
+    except FileNotFoundError:
+        st.error("详情文件丢失。")
+        if st.button("清理这个孤立 summary"):
+            store.delete(run_id)
+            st.rerun()
+        return
+
+    # Equity curve
+    import plotly.express as px
+    fig = px.line(detail.portfolio_values, title="Equity Curve")
+    fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="Value")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Inner tabs for the heavy data
+    t_metrics, t_trades, t_weights, t_config = st.tabs([
+        "Metrics", "Trades", "Weights", "Config & Code"
+    ])
+    with t_metrics:
+        st.json(summary.metrics)
+    with t_trades:
+        if detail.trades:
+            import pandas as pd
+            st.dataframe(pd.DataFrame([t.to_dict() for t in detail.trades]))
+        else:
+            st.caption("No trades.")
+    with t_weights:
+        st.dataframe(detail.weights_history)
+    with t_config:
+        st.write("**Config**")
+        st.json(summary.config)
+        st.write("**Strategy code**")
+        # strategy_code lives in summary.json but RunSummary excludes it;
+        # re-read raw to fetch it.
+        import json
+        path = store.runs_dir / f"{run_id}.summary.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        st.code(raw.get("strategy_code", ""), language="python")
