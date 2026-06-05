@@ -143,3 +143,10 @@ def test_save_and_list_and_load_roundtrip(store):
     assert len(detail.trades) == 1
     assert detail.trades[0].ticker == "AAA"
     assert detail.effective_start_date == date_t(2024, 1, 2)
+
+
+def test_save_returns_none_on_failed_result(store, tmp_path):
+    failed = _make_fake_result(success=False)
+    rid = store.save(failed, mode="dynamic", name="x", strategy_code="")
+    assert rid is None
+    assert list(tmp_path.glob("*.json")) == []
