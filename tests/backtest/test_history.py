@@ -225,3 +225,49 @@ def test_prune_keeps_all_when_under_limit(tmp_path):
                    name=f"r{i}", strategy_code=f"# {i}")
         time.sleep(0.01)
     assert len(store.list_summaries()) == 3
+
+
+def test_save_writes_detail_before_summary(store, tmp_path, monkeypatch):
+    """If summary write fails, no orphan summary on disk; detail may
+    exist (orphan). The next save's _prune cleans up via list_summaries
+    not seeing the orphan."""
+    import backtest.history as hist
+
+    original_atomic = hist._atomic_write_json
+    seen_paths = []
+
+    def flaky_atomic(path, obj):
+        seen_paths.append(path)
+        if str(path).endswith(".summary.json"):
+            raise IOError("simulated disk failure")
+        return original_atomic(path, obj)
+
+    monkeypatch.setattr(hist, "_atomic_write_json", flaky_atomic)
+
+    with pytest.raises(IOError):
+        store.save(_make_fake_result(), mode="dynamic", name="x",
+                   strategy_code="def s(): pass")
+
+    suffixes = [str(p).split(".")[-2] for p in seen_paths]
+    assert suffixes[0] == "detail" and suffixes[1] == "summary", suffixes
+
+    assert store.list_summaries() == []
+
+
+def test_orphan_summary_load_detail_raises_clearly(store, tmp_path):
+    rid = store.save(_make_fake_result(), mode="dynamic", name="x",
+                     strategy_code="def s(): pass")
+    (tmp_path / f"{rid}.detail.json").unlink()
+
+    assert any(s.id == rid for s in store.list_summaries())
+    with pytest.raises(FileNotFoundError):
+        store.load_detail(rid)
+
+
+def test_orphan_detail_pruned_when_summary_deleted(store, tmp_path):
+    rid = store.save(_make_fake_result(), mode="dynamic", name="x",
+                     strategy_code="def s(): pass")
+    (tmp_path / f"{rid}.summary.json").unlink()
+
+    store.delete(rid)
+    assert not (tmp_path / f"{rid}.detail.json").exists()
