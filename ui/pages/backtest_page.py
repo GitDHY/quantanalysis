@@ -308,7 +308,17 @@ def render_static_backtest(
                 weights=portfolio.weights,
                 config=config
             )
-        
+
+        if result.success:
+            from backtest.history import RunHistoryStore
+            if "history_store" not in st.session_state:
+                st.session_state.history_store = RunHistoryStore()
+            tickers_str = "+".join(result.weights_history.columns[:3])
+            static_name = f"static ({tickers_str})"
+            st.session_state.history_store.save(
+                result, mode="static", name=static_name, strategy_code="",
+            )
+
         if not result.success:
             st.error(f"回测失败: {result.message}")
             return
@@ -471,7 +481,17 @@ def render_dynamic_backtest(
                 strategy_code=strategy['code'],
                 config=config
             )
-        
+
+        if result.success:
+            from backtest.history import RunHistoryStore
+            if "history_store" not in st.session_state:
+                st.session_state.history_store = RunHistoryStore()
+            st.session_state.history_store.save(
+                result, mode="dynamic",
+                name=selected_strategy,
+                strategy_code=strategy['code'],
+            )
+
         if not result.success:
             st.error(f"回测失败: {result.message}")
             return
@@ -681,7 +701,16 @@ def render_multi_strategy_comparison(
                     metrics['交易次数'] = len(result.trades)
                     metrics['总交易成本'] = sum(t.cost for t in result.trades)
                     all_metrics.append(metrics)
-            
+
+                    from backtest.history import RunHistoryStore
+                    if "history_store" not in st.session_state:
+                        st.session_state.history_store = RunHistoryStore()
+                    st.session_state.history_store.save(
+                        result, mode="multi",
+                        name=f"{strategy_name} (multi)",
+                        strategy_code=strategy['code'],
+                    )
+
             except Exception as e:
                 st.warning(f"策略 '{strategy_name}' 回测失败: {str(e)}")
             
