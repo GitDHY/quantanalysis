@@ -31,6 +31,39 @@ SCHEMA_VERSION = 1
 DEFAULT_MAX_UNPINNED = 50
 
 
+def _hash_strategy_code(code: str) -> str:
+    """SHA256 hex of the strategy source. '' is hashed as empty string."""
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def _hash_config(config: Dict[str, Any]) -> str:
+    """SHA256 hex of a JSON-canonicalized dict (sort_keys, default=str)."""
+    canonical = json.dumps(config, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _make_run_id(
+    strategy_code: str,
+    runs_dir: Path,
+    at: Optional[datetime] = None,
+) -> str:
+    """Generate a unique run_id of the form YYYYMMDDTHHMMSS_<hash[:4]>.
+
+    On collision (file with this id already on disk), append _2, _3, ...
+    """
+    if at is None:
+        at = datetime.now()
+    timestamp = at.strftime("%Y%m%dT%H%M%S")
+    code_prefix = _hash_strategy_code(strategy_code)[:4]
+    base = f"{timestamp}_{code_prefix}"
+    candidate = base
+    suffix = 2
+    while (runs_dir / f"{candidate}.summary.json").exists():
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
 @dataclass
 class RunSummary:
     """Lightweight metadata for the list view. Mirrors <id>.summary.json
