@@ -184,3 +184,44 @@ def test_delete_removes_both_files(store, tmp_path):
 def test_delete_handles_missing_files(store):
     """delete is idempotent — calling it on a non-existent id is OK."""
     store.delete("nonexistent_id_xyz")  # must not raise
+
+
+import time
+
+
+def test_prune_keeps_pinned_plus_n_recent(tmp_path):
+    """save N=5 with max_unpinned=3, pin one in the middle. After pruning
+    we should have {pinned[1]} ∪ {3 most recent unpinned} = 4 runs.
+    Oldest unpinned is dropped."""
+    store = RunHistoryStore(runs_dir=tmp_path, max_unpinned=3)
+
+    ids = []
+    for i in range(5):
+        rid = store.save(_make_fake_result(), mode="dynamic",
+                          name=f"r{i}", strategy_code=f"# {i}\ndef s(): pass")
+        ids.append(rid)
+        time.sleep(0.01)
+
+    store.pin(ids[1])
+    store._prune()
+
+    summaries = store.list_summaries()
+    surviving_ids = {s.id for s in summaries}
+
+    assert ids[1] in surviving_ids
+    assert ids[4] in surviving_ids
+    assert ids[3] in surviving_ids
+    assert ids[2] in surviving_ids
+    assert ids[0] not in surviving_ids
+
+    assert not (tmp_path / f"{ids[0]}.summary.json").exists()
+    assert not (tmp_path / f"{ids[0]}.detail.json").exists()
+
+
+def test_prune_keeps_all_when_under_limit(tmp_path):
+    store = RunHistoryStore(runs_dir=tmp_path, max_unpinned=10)
+    for i in range(3):
+        store.save(_make_fake_result(), mode="dynamic",
+                   name=f"r{i}", strategy_code=f"# {i}")
+        time.sleep(0.01)
+    assert len(store.list_summaries()) == 3

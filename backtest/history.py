@@ -192,6 +192,7 @@ class RunHistoryStore:
         if not result.success:
             return None
 
+        self._prune()  # make room BEFORE adding the new run
         run_id = _make_run_id(strategy_code, self.runs_dir)
         config_dict = self._config_to_dict(result.config)
 
@@ -240,7 +241,6 @@ class RunHistoryStore:
         _atomic_write_json(self.runs_dir / f"{run_id}.detail.json", detail)
         _atomic_write_json(self.runs_dir / f"{run_id}.summary.json", summary)
 
-        self._prune()
         return run_id
 
     # ---------- readers ----------
@@ -334,6 +334,12 @@ class RunHistoryStore:
         _atomic_write_json(path, raw)
 
     def _prune(self) -> None:
-        """Stub — implemented in Task 6. Called from save() so it's
-        wired up early; will be a no-op until Task 6 fills it in."""
-        pass
+        """Keep all pinned + max_unpinned most-recent unpinned. Delete
+        the rest (both summary and detail files)."""
+        all_summaries = self.list_summaries()
+        unpinned = [s for s in all_summaries if not s.pinned]
+        # list_summaries returns descending by created_at, so unpinned[max_unpinned:]
+        # is the oldest unpinned beyond the budget.
+        to_drop = unpinned[self.max_unpinned :]
+        for s in to_drop:
+            self.delete(s.id)
