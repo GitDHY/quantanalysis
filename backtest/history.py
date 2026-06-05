@@ -310,6 +310,29 @@ class RunHistoryStore:
                 d[key] = v.isoformat()
         return d
 
+    def pin(self, run_id: str) -> None:
+        self._set_summary_field(run_id, "pinned", True)
+
+    def unpin(self, run_id: str) -> None:
+        self._set_summary_field(run_id, "pinned", False)
+
+    def update_note(self, run_id: str, note: str) -> None:
+        self._set_summary_field(run_id, "note", note)
+
+    def delete(self, run_id: str) -> None:
+        for suffix in (".summary.json", ".detail.json"):
+            path = self.runs_dir / f"{run_id}{suffix}"
+            if path.exists():
+                path.unlink()
+
+    def _set_summary_field(self, run_id: str, field_name: str, value: Any) -> None:
+        path = self.runs_dir / f"{run_id}.summary.json"
+        if not path.exists():
+            raise FileNotFoundError(f"no summary for run_id={run_id}")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw[field_name] = value
+        _atomic_write_json(path, raw)
+
     def _prune(self) -> None:
         """Stub — implemented in Task 6. Called from save() so it's
         wired up early; will be a no-op until Task 6 fills it in."""

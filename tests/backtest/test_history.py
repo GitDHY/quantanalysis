@@ -150,3 +150,37 @@ def test_save_returns_none_on_failed_result(store, tmp_path):
     rid = store.save(failed, mode="dynamic", name="x", strategy_code="")
     assert rid is None
     assert list(tmp_path.glob("*.json")) == []
+
+
+def test_pin_unpin_round_trip(store):
+    rid = store.save(_make_fake_result(), mode="dynamic", name="a",
+                     strategy_code="def s(): pass")
+    assert store.list_summaries()[0].pinned is False
+    store.pin(rid)
+    assert store.list_summaries()[0].pinned is True
+    store.unpin(rid)
+    assert store.list_summaries()[0].pinned is False
+
+
+def test_update_note_persists(store):
+    rid = store.save(_make_fake_result(), mode="dynamic", name="a",
+                     strategy_code="def s(): pass")
+    store.update_note(rid, "baseline run before adding RSI filter")
+    assert store.list_summaries()[0].note == \
+        "baseline run before adding RSI filter"
+
+
+def test_delete_removes_both_files(store, tmp_path):
+    rid = store.save(_make_fake_result(), mode="dynamic", name="a",
+                     strategy_code="def s(): pass")
+    assert (tmp_path / f"{rid}.summary.json").exists()
+    assert (tmp_path / f"{rid}.detail.json").exists()
+    store.delete(rid)
+    assert not (tmp_path / f"{rid}.summary.json").exists()
+    assert not (tmp_path / f"{rid}.detail.json").exists()
+    assert store.list_summaries() == []
+
+
+def test_delete_handles_missing_files(store):
+    """delete is idempotent — calling it on a non-existent id is OK."""
+    store.delete("nonexistent_id_xyz")  # must not raise
