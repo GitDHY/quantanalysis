@@ -317,6 +317,7 @@ def render_static_backtest(
             static_name = f"static ({tickers_str})"
             st.session_state.history_store.save(
                 result, mode="static", name=static_name, strategy_code="",
+                portfolio_name=selected_portfolio,
             )
 
         if not result.success:
@@ -490,6 +491,7 @@ def render_dynamic_backtest(
                 result, mode="dynamic",
                 name=selected_strategy,
                 strategy_code=strategy['code'],
+                portfolio_name=selected_portfolio,
             )
 
         if not result.success:
@@ -709,6 +711,7 @@ def render_multi_strategy_comparison(
                         result, mode="multi",
                         name=f"{strategy_name} (multi)",
                         strategy_code=strategy['code'],
+                        portfolio_name=selected_portfolio,
                     )
 
             except Exception as e:

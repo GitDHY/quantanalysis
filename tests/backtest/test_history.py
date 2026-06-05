@@ -306,3 +306,34 @@ def test_load_detail_handles_timestamp_trade_dates(store):
     assert detail.trades[0].date.month == 6
     assert detail.trades[0].date.day == 7
 
+
+def test_save_records_portfolio_name(store):
+    """save() accepts a portfolio_name kwarg and round-trips it via the
+    summary.json so the History list view can show which portfolio each
+    run used."""
+    rid = store.save(
+        _make_fake_result(), mode="dynamic", name="momentum_v2",
+        strategy_code="def s(): pass",
+        portfolio_name="60/40 retirement",
+    )
+    s = store.list_summaries()[0]
+    assert s.id == rid
+    assert s.portfolio_name == "60/40 retirement"
+
+
+def test_portfolio_name_defaults_to_empty_for_legacy_runs(store, tmp_path):
+    """Existing summary.json files written before portfolio_name was a
+    field must still load — the field defaults to ''."""
+    # Simulate an older saved run by writing summary directly.
+    (tmp_path / "20260101T000000_dead.summary.json").write_text(
+        '{"id":"20260101T000000_dead","schema_version":1,'
+        '"created_at":"2026-01-01T00:00:00","mode":"dynamic","name":"old",'
+        '"note":"","pinned":false,"metrics":{},"fingerprint":{},"config":{},'
+        '"tickers":[]}',
+        encoding="utf-8",
+    )
+    summaries = store.list_summaries()
+    assert len(summaries) == 1
+    assert summaries[0].portfolio_name == ""
+
+

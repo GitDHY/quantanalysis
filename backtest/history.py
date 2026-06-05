@@ -146,6 +146,9 @@ class RunSummary:
     fingerprint: Dict[str, Any]
     config: Dict[str, Any]
     tickers: List[str]
+    # Portfolio (combination) the run was executed against. Empty string
+    # for legacy runs saved before this field was introduced.
+    portfolio_name: str = ""
 
 
 @dataclass
@@ -198,6 +201,7 @@ class RunHistoryStore:
         mode: str,
         name: str,
         strategy_code: str = "",
+        portfolio_name: str = "",
     ) -> Optional[str]:
         """Write summary + detail atomically. Returns run_id, or None if
         result.success is False (no files written)."""
@@ -216,6 +220,7 @@ class RunHistoryStore:
             "name": name,
             "note": "",
             "pinned": False,
+            "portfolio_name": portfolio_name,
             "metrics": dict(result.metrics or {}),
             "fingerprint": {
                 "prices_hash": result.prices_hash,
@@ -283,6 +288,7 @@ class RunHistoryStore:
                     fingerprint=dict(raw.get("fingerprint", {})),
                     config=dict(raw.get("config", {})),
                     tickers=list(raw.get("tickers", [])),
+                    portfolio_name=str(raw.get("portfolio_name", "")),
                 ))
             except (KeyError, ValueError) as e:
                 logger.warning("history: malformed %s: %s", path, e)

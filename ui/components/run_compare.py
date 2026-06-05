@@ -60,8 +60,20 @@ def render_history_list(store: RunHistoryStore) -> List[str]:
                f"({n_pinned} pinned + {n_recent} recent)")
 
     selected_ids: List[str] = []
+    # Header row to identify columns. Ratios match the data rows below.
+    header_cols = st.columns([0.5, 0.4, 1.5, 1.7, 1.5, 1.0, 1.0, 2.0, 0.8])
+    header_cols[0].caption("")
+    header_cols[1].caption("📌")
+    header_cols[2].caption("时间")
+    header_cols[3].caption("策略 / 名称")
+    header_cols[4].caption("组合")
+    header_cols[5].caption("Sharpe")
+    header_cols[6].caption("Total Return")
+    header_cols[7].caption("备注")
+    header_cols[8].caption("")
+
     for s in summaries:
-        cols = st.columns([0.5, 0.4, 1.5, 1.7, 1.0, 1.0, 2.0, 0.8])
+        cols = st.columns([0.5, 0.4, 1.5, 1.7, 1.5, 1.0, 1.0, 2.0, 0.8])
         with cols[0]:
             picked = st.checkbox("", key=f"pick_{s.id}", label_visibility="collapsed")
             if picked:
@@ -79,6 +91,9 @@ def render_history_list(store: RunHistoryStore) -> List[str]:
         with cols[3]:
             st.text(s.name)
         with cols[4]:
+            # Portfolio (combination) name; empty string for legacy runs.
+            st.text(s.portfolio_name or "—")
+        with cols[5]:
             # PerformanceMetrics emits "Sharpe Ratio"; tests/older saves
             # may use lowercase variants. Try in production-first order.
             sharpe = (
@@ -87,7 +102,7 @@ def render_history_list(store: RunHistoryStore) -> List[str]:
                 or s.metrics.get("sharpe")
             )
             st.text(f"Sharpe {sharpe:.2f}" if sharpe is not None else "")
-        with cols[5]:
+        with cols[6]:
             # PerformanceMetrics emits "Total Return (%)" already in
             # percent units (152.0 for +152%); test fixtures often use
             # "total_return" as a fraction (1.52). Disambiguate here.
@@ -99,14 +114,14 @@ def render_history_list(store: RunHistoryStore) -> List[str]:
                 st.text(f"{tr_frac:+.1%}")
             else:
                 st.text("")
-        with cols[6]:
+        with cols[7]:
             new_note = st.text_input(
                 "", value=s.note, key=f"note_{s.id}",
                 label_visibility="collapsed", placeholder="备注...",
             )
             if new_note != s.note:
                 store.update_note(s.id, new_note)
-        with cols[7]:
+        with cols[8]:
             if st.button("🗑", key=f"del_{s.id}", help="删除"):
                 store.delete(s.id)
                 st.rerun()
