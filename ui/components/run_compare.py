@@ -150,3 +150,67 @@ def render_detail(run_id: str, store: RunHistoryStore) -> None:
         path = store.runs_dir / f"{run_id}.summary.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
         st.code(raw.get("strategy_code", ""), language="python")
+
+
+def render_compare(run_ids: List[str], store: RunHistoryStore) -> None:
+    """Compare 2–4 runs: equity overlay, metrics table, inputs diff."""
+    summaries_by_id = {s.id: s for s in store.list_summaries()}
+    summaries = [summaries_by_id[rid] for rid in run_ids
+                 if rid in summaries_by_id]
+
+    if len(summaries) < 2:
+        st.warning("compare 需要至少 2 个有效 run")
+        return
+
+    st.header(f"对比 {len(summaries)} 个 run")
+
+    # 1. Equity overlay
+    st.subheader("Equity Curves")
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    for s in summaries:
+        try:
+            d = store.load_detail(s.id)
+        except FileNotFoundError:
+            st.warning(f"{s.name}: detail 文件缺失,跳过")
+            continue
+        fig.add_trace(go.Scatter(
+            x=d.portfolio_values.index,
+            y=d.portfolio_values.values,
+            mode="lines",
+            name=f"{s.name} ({s.id[-9:]})",
+        ))
+    fig.update_layout(xaxis_title=None, yaxis_title="Value", hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 2. Metrics table — pivot summaries × metric names
+    st.subheader("Metrics")
+    import pandas as pd
+    metric_keys = sorted({k for s in summaries for k in s.metrics.keys()})
+    rows = {}
+    for k in metric_keys:
+        rows[k] = [s.metrics.get(k) for s in summaries]
+    df_m = pd.DataFrame(rows, index=[f"{s.name}\n{s.id[-9:]}" for s in summaries]).T
+    st.dataframe(df_m, use_container_width=True)
+
+    # 3. Inputs Diff — only fields that differ
+    st.subheader("Inputs Diff (only fields that differ)")
+    diff = compute_inputs_diff(summaries)
+    if not diff:
+        st.success("✅ 所有输入字段一致 (prices_hash / code_hash / config 全相同)")
+    else:
+        diff_rows = {field_name: values for field_name, values in diff.items()}
+        df_d = pd.DataFrame(
+            diff_rows,
+            index=[f"{s.name}\n{s.id[-9:]}" for s in summaries],
+        ).T
+        # Highlight differing cells: a cell highlights iff its value
+        # ≠ all others in the row.
+        def _highlight(row):
+            return [
+                "background-color: #ffe4b3" if v != row.iloc[0] or
+                any(other != row.iloc[0] for other in row) else ""
+                for v in row
+            ]
+        st.dataframe(df_d.style.apply(_highlight, axis=1),
+                     use_container_width=True)
