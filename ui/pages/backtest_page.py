@@ -122,8 +122,10 @@ def render_backtest_page():
             ),
         )
     
-    # Main content - Three tabs
-    tab1, tab2, tab3 = st.tabs(["📊 静态回测", "🧠 策略回测", "⚔️ 多策略对比"])
+    # Main content - Four tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 静态回测", "🧠 策略回测", "⚔️ 多策略对比", "📜 History"
+    ])
     
     with tab1:
         render_static_backtest(
@@ -156,6 +158,41 @@ def render_backtest_page():
             commission_pct, slippage_pct,
             normalize_weights
         )
+
+    with tab4:
+        render_history_tab()
+
+
+def render_history_tab():
+    """4th tab: persisted history of past backtest runs + compare flow."""
+    from backtest.history import RunHistoryStore
+    from ui.components.run_compare import (
+        render_history_list, render_detail, render_compare,
+    )
+
+    if "history_store" not in st.session_state:
+        st.session_state.history_store = RunHistoryStore()
+    store = st.session_state.history_store
+
+    selected = render_history_list(store)
+    st.divider()
+
+    if 2 <= len(selected) <= 4:
+        if st.button(f"📊 对比选中的 {len(selected)} 个", type="primary"):
+            st.session_state.compare_run_ids = selected
+            st.rerun()
+    elif len(selected) > 4:
+        st.warning(f"最多对比 4 个 (你选了 {len(selected)})")
+    elif len(selected) == 1:
+        st.divider()
+        render_detail(selected[0], store)
+
+    if st.session_state.get("compare_run_ids"):
+        st.divider()
+        render_compare(st.session_state.compare_run_ids, store)
+        if st.button("← 返回列表"):
+            del st.session_state["compare_run_ids"]
+            st.rerun()
 
 
 def render_static_backtest(
