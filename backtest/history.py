@@ -72,6 +72,18 @@ def _atomic_write_json(path: Path, obj: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _parse_iso_date(s: str) -> date:
+    """Parse a date out of an ISO string permissively.
+
+    Accepts both "YYYY-MM-DD" and full datetime strings like
+    "2023-06-07T00:00:00.000001". The engine produces the latter when
+    Trade.date is a pd.Timestamp (Timestamp is a subclass of
+    datetime.date so isinstance() lets it through Trade.to_dict()'s
+    isoformat() branch). We collapse everything to a pure date here.
+    """
+    return pd.Timestamp(s).date()
+
+
 def _series_to_dict(s: pd.Series) -> Dict[str, float]:
     return {
         (idx.isoformat() if hasattr(idx, "isoformat") else str(idx)): float(v)
@@ -287,14 +299,14 @@ class RunHistoryStore:
             drawdown_series=_dict_to_series(raw["drawdown_series"]),
             weights_history=_records_to_df(raw["weights_history"]),
             trades=[Trade(
-                date=date.fromisoformat(t["date"]),
+                date=_parse_iso_date(t["date"]),
                 ticker=t["ticker"], action=t["action"],
                 shares=float(t["shares"]), price=float(t["price"]),
                 value=float(t["value"]), cost=float(t["cost"]),
             ) for t in raw.get("trades", [])],
-            effective_start_date=(date.fromisoformat(raw["effective_start_date"])
+            effective_start_date=(_parse_iso_date(raw["effective_start_date"])
                                   if raw.get("effective_start_date") else None),
-            effective_end_date=(date.fromisoformat(raw["effective_end_date"])
+            effective_end_date=(_parse_iso_date(raw["effective_end_date"])
                                 if raw.get("effective_end_date") else None),
         )
 

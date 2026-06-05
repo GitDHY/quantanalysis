@@ -275,3 +275,34 @@ def test_orphan_detail_pruned_when_summary_deleted(store, tmp_path):
 
     store._prune()
     assert not (tmp_path / f"{rid}.detail.json").exists()
+
+
+def test_load_detail_handles_timestamp_trade_dates(store):
+    """Real engine produces Trade.date as pd.Timestamp (with microsecond
+    precision from t+1 fill semantics). isinstance(ts, datetime.date) is
+    True for Timestamp, so Trade.to_dict() emits a full ISO datetime
+    string like '2023-06-07T00:00:00.000001'. load_detail must accept
+    that, not just bare 'YYYY-MM-DD'.
+
+    Regression for the runtime ValueError seen on a real saved run:
+        ValueError: Invalid isoformat string: '2023-06-07T00:00:00.000001'
+    """
+    result = _make_fake_result()
+    # Replace the test fixture's pure-date trade with one whose date is a
+    # pd.Timestamp + 1 microsecond — the exact shape produced by the
+    # engine's t_open fill code (engine.py: idx + pd.Timedelta(microseconds=1)).
+    ts = pd.Timestamp("2023-06-07") + pd.Timedelta(microseconds=1)
+    result.trades = [Trade(date=ts, ticker="AAA", action="BUY",
+                            shares=10.0, price=100.0, value=1000.0, cost=1.0)]
+    rid = store.save(result, mode="dynamic", name="x",
+                     strategy_code="def s(): pass")
+
+    # Must not raise.
+    detail = store.load_detail(rid)
+    assert len(detail.trades) == 1
+    # Engine's microsecond is fine to lose — what we want is "the day was
+    # preserved" so the trade aligns with the equity curve.
+    assert detail.trades[0].date.year == 2023
+    assert detail.trades[0].date.month == 6
+    assert detail.trades[0].date.day == 7
+
