@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Backtest run history (#3)
+
+Persistent history of every backtest run + a 2–4-run side-by-side compare view.
+
+### Added
+
+- `backtest/history.py` — new module:
+  - `RunHistoryStore` class: file-based store with atomic writes, ring-buffer pruning (default 50 unpinned + unbounded pinned), pin/note/delete mutators.
+  - `RunSummary`, `RunDetail` dataclasses for the tiered storage layout.
+  - Hash helpers (`_hash_strategy_code`, `_hash_config`) and `_make_run_id` with collision avoidance.
+- `ui/components/run_compare.py`:
+  - `compute_inputs_diff` — pure function isolating the Inputs Diff logic for unit testing.
+  - `render_history_list`, `render_detail`, `render_compare` — Streamlit UIs.
+- `ui/pages/backtest_page.py` — new "📜 History" 4th tab; static/dynamic/multi-strategy backtests now auto-save their `BacktestResult` to history on success (`result.success=False` runs are skipped).
+- `data/runs/` — runtime directory (gitignored under existing `data/` rules) with one `<id>.summary.json` (~3KB) and one `<id>.detail.json` (~50–200KB) per run, plus `_meta.json` for global config.
+
+### Tests
+
+- `tests/backtest/test_history.py` (14 tests): save/list/load round-trip, skip-failed-runs, pin/unpin/note/delete, ring-buffer prune, atomic-write invariant, orphan-file handling, run_id collision.
+- `tests/ui/test_run_compare.py` (5 tests): pure-function `compute_inputs_diff` cases.
+
+### Migration
+
+- Old runs from before this commit are not retroactively imported.
+- Designed for forward compatibility with #2 (Walk-forward): a `parent_run_id` field will be added to summary's schema_version=2 when WFA produces child runs.
+
 ## Unreleased — Phase 2: backtest correctness
 
 Two fixes to `BacktestEngine.run_dynamic` that change reported numbers (in the conservative direction). Backtest results from this version onward will differ from previous runs.
