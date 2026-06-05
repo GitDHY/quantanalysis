@@ -59,3 +59,87 @@ def test_make_run_id_collision_appends_suffix(tmp_path):
     (tmp_path / f"{rid2}.summary.json").write_text("{}", encoding="utf-8")
     rid3 = _make_run_id(strategy_code=code, runs_dir=tmp_path, at=at)
     assert rid3 == f"{rid1}_3"
+
+
+import pytest
+import pandas as pd
+from datetime import date as date_t
+
+from backtest.engine import BacktestResult, BacktestConfig, Trade
+
+
+def _make_fake_result(success: bool = True, n_bars: int = 10) -> BacktestResult:
+    idx = pd.bdate_range("2024-01-02", periods=n_bars)
+    pv = pd.Series([100000.0 + i * 100 for i in range(n_bars)],
+                   index=idx, name="value")
+    dd = pd.Series([0.0] * n_bars, index=idx)
+    weights = pd.DataFrame(
+        {"AAA": [50.0] * n_bars, "BBB": [50.0] * n_bars}, index=idx
+    )
+    trades = [
+        Trade(date=date_t(2024, 1, 2), ticker="AAA", action="BUY",
+              shares=500.0, price=100.0, value=50000.0, cost=50.0),
+    ]
+    cfg = BacktestConfig(
+        start_date=date_t(2024, 1, 2),
+        end_date=date_t(2024, 1, 15),
+        initial_capital=100_000.0,
+        rebalance_freq="monthly",
+        commission_fixed=0.0, commission_pct=0.001, slippage_pct=0.001,
+    )
+    return BacktestResult(
+        portfolio_values=pv,
+        trades=trades,
+        metrics={"total_return": 0.009, "sharpe": 1.5},
+        drawdown_series=dd,
+        weights_history=weights,
+        config=cfg,
+        success=success,
+        effective_start_date=date_t(2024, 1, 2),
+        effective_end_date=date_t(2024, 1, 15),
+        prices_hash="ab12cd",
+        bars_count=n_bars,
+        pandas_version="2.0.3",
+        numpy_version="1.24.3",
+        python_version="3.11.5",
+    )
+
+
+@pytest.fixture
+def store(tmp_path):
+    return RunHistoryStore(runs_dir=tmp_path, max_unpinned=50)
+
+
+def test_save_and_list_and_load_roundtrip(store):
+    result = _make_fake_result()
+    run_id = store.save(
+        result, mode="dynamic", name="momentum_v2",
+        strategy_code="def strategy(): return {'AAA': 50, 'BBB': 50}",
+    )
+
+    assert isinstance(run_id, str) and len(run_id) > 0
+
+    summaries = store.list_summaries()
+    assert len(summaries) == 1
+    s = summaries[0]
+    assert s.id == run_id
+    assert s.name == "momentum_v2"
+    assert s.mode == "dynamic"
+    assert s.note == ""
+    assert s.pinned is False
+    assert s.metrics == {"total_return": 0.009, "sharpe": 1.5}
+    assert s.fingerprint["prices_hash"] == "ab12cd"
+    assert s.fingerprint["bars_count"] == 10
+    assert s.fingerprint["pandas_version"] == "2.0.3"
+    assert "code_hash" in s.fingerprint
+    assert "config_hash" in s.fingerprint
+
+    detail = store.load_detail(run_id)
+    pd.testing.assert_series_equal(detail.portfolio_values, result.portfolio_values,
+                                   check_names=False)
+    pd.testing.assert_series_equal(detail.drawdown_series, result.drawdown_series,
+                                   check_names=False)
+    pd.testing.assert_frame_equal(detail.weights_history, result.weights_history)
+    assert len(detail.trades) == 1
+    assert detail.trades[0].ticker == "AAA"
+    assert detail.effective_start_date == date_t(2024, 1, 2)

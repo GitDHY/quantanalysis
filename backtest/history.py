@@ -64,6 +64,62 @@ def _make_run_id(
     return candidate
 
 
+def _atomic_write_json(path: Path, obj: Dict[str, Any]) -> None:
+    """Write JSON to <path>.tmp then os.replace into place."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2,
+                              default=str), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _series_to_dict(s: pd.Series) -> Dict[str, float]:
+    return {
+        (idx.isoformat() if hasattr(idx, "isoformat") else str(idx)): float(v)
+        for idx, v in s.items()
+    }
+
+
+def _dict_to_series(d: Dict[str, float]) -> pd.Series:
+    if not d:
+        return pd.Series(dtype=float)
+    keys = list(d.keys())
+    idx = pd.DatetimeIndex([pd.Timestamp(k) for k in keys])
+    try:
+        inferred = pd.infer_freq(idx)
+        if inferred:
+            idx.freq = inferred
+    except Exception:
+        pass
+    return pd.Series([float(d[k]) for k in keys], index=idx)
+
+
+def _df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    if df.empty:
+        return []
+    out = []
+    for ts, row in df.iterrows():
+        rec = {"date": ts.isoformat() if hasattr(ts, "isoformat") else str(ts)}
+        for col in df.columns:
+            rec[col] = float(row[col])
+        out.append(rec)
+    return out
+
+
+def _records_to_df(records: List[Dict[str, Any]]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame()
+    idx = pd.DatetimeIndex([pd.Timestamp(r["date"]) for r in records])
+    try:
+        inferred = pd.infer_freq(idx)
+        if inferred:
+            idx.freq = inferred
+    except Exception:
+        pass
+    cols = [k for k in records[0].keys() if k != "date"]
+    data = {c: [float(r[c]) for r in records] for c in cols}
+    return pd.DataFrame(data, index=idx)
+
+
 @dataclass
 class RunSummary:
     """Lightweight metadata for the list view. Mirrors <id>.summary.json
@@ -120,3 +176,141 @@ class RunHistoryStore:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("history: failed to read _meta.json: %s", e)
             return {}
+
+    # ---------- mutators ----------
+
+    def save(
+        self,
+        result: "BacktestResult",
+        *,
+        mode: str,
+        name: str,
+        strategy_code: str = "",
+    ) -> Optional[str]:
+        """Write summary + detail atomically. Returns run_id, or None if
+        result.success is False (no files written)."""
+        if not result.success:
+            return None
+
+        run_id = _make_run_id(strategy_code, self.runs_dir)
+        config_dict = self._config_to_dict(result.config)
+
+        summary = {
+            "id": run_id,
+            "schema_version": SCHEMA_VERSION,
+            "created_at": datetime.now().isoformat(),
+            "mode": mode,
+            "name": name,
+            "note": "",
+            "pinned": False,
+            "metrics": dict(result.metrics or {}),
+            "fingerprint": {
+                "prices_hash": result.prices_hash,
+                "code_hash": _hash_strategy_code(strategy_code),
+                "code_first_line": (strategy_code.splitlines()[0][:80]
+                                     if strategy_code else ""),
+                "config_hash": _hash_config(config_dict),
+                "bars_count": result.bars_count,
+                "pandas_version": result.pandas_version,
+                "numpy_version": result.numpy_version,
+                "python_version": result.python_version,
+            },
+            "config": config_dict,
+            "strategy_code": strategy_code,
+            "tickers": list(result.weights_history.columns)
+                       if not result.weights_history.empty else [],
+            "warnings": list(result.warnings or []),
+        }
+
+        detail = {
+            "id": run_id,
+            "schema_version": SCHEMA_VERSION,
+            "portfolio_values": _series_to_dict(result.portfolio_values),
+            "drawdown_series": _series_to_dict(result.drawdown_series),
+            "weights_history": _df_to_records(result.weights_history),
+            "trades": [t.to_dict() for t in (result.trades or [])],
+            "effective_start_date": (result.effective_start_date.isoformat()
+                                     if result.effective_start_date else None),
+            "effective_end_date": (result.effective_end_date.isoformat()
+                                   if result.effective_end_date else None),
+        }
+
+        # Write detail BEFORE summary so an interrupted save never leaves
+        # an orphan summary that points to nothing.
+        _atomic_write_json(self.runs_dir / f"{run_id}.detail.json", detail)
+        _atomic_write_json(self.runs_dir / f"{run_id}.summary.json", summary)
+
+        self._prune()
+        return run_id
+
+    # ---------- readers ----------
+
+    def list_summaries(self) -> List[RunSummary]:
+        """All *.summary.json sorted by created_at descending. Skip+log
+        any file we can't parse."""
+        out: List[RunSummary] = []
+        for path in self.runs_dir.glob("*.summary.json"):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("history: skipping unreadable %s: %s", path, e)
+                continue
+            if raw.get("schema_version", 0) > SCHEMA_VERSION:
+                logger.warning("history: skipping %s — newer schema version %s",
+                               path, raw.get("schema_version"))
+                continue
+            try:
+                out.append(RunSummary(
+                    id=raw["id"],
+                    created_at=datetime.fromisoformat(raw["created_at"]),
+                    mode=raw.get("mode", "dynamic"),
+                    name=raw.get("name", ""),
+                    note=raw.get("note", ""),
+                    pinned=bool(raw.get("pinned", False)),
+                    metrics=dict(raw.get("metrics", {})),
+                    fingerprint=dict(raw.get("fingerprint", {})),
+                    config=dict(raw.get("config", {})),
+                    tickers=list(raw.get("tickers", [])),
+                ))
+            except (KeyError, ValueError) as e:
+                logger.warning("history: malformed %s: %s", path, e)
+        out.sort(key=lambda s: s.created_at, reverse=True)
+        return out
+
+    def load_detail(self, run_id: str) -> "RunDetail":
+        """Read <run_id>.detail.json. Raises FileNotFoundError if missing."""
+        path = self.runs_dir / f"{run_id}.detail.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return RunDetail(
+            id=raw["id"],
+            portfolio_values=_dict_to_series(raw["portfolio_values"]),
+            drawdown_series=_dict_to_series(raw["drawdown_series"]),
+            weights_history=_records_to_df(raw["weights_history"]),
+            trades=[Trade(
+                date=date.fromisoformat(t["date"]),
+                ticker=t["ticker"], action=t["action"],
+                shares=float(t["shares"]), price=float(t["price"]),
+                value=float(t["value"]), cost=float(t["cost"]),
+            ) for t in raw.get("trades", [])],
+            effective_start_date=(date.fromisoformat(raw["effective_start_date"])
+                                  if raw.get("effective_start_date") else None),
+            effective_end_date=(date.fromisoformat(raw["effective_end_date"])
+                                if raw.get("effective_end_date") else None),
+        )
+
+    # ---------- helpers ----------
+
+    def _config_to_dict(self, cfg) -> Dict[str, Any]:
+        """BacktestConfig → JSON-safe dict."""
+        d = asdict(cfg)
+        # date → ISO string
+        for key in ("start_date", "end_date"):
+            v = d.get(key)
+            if isinstance(v, date):
+                d[key] = v.isoformat()
+        return d
+
+    def _prune(self) -> None:
+        """Stub — implemented in Task 6. Called from save() so it's
+        wired up early; will be a no-op until Task 6 fills it in."""
+        pass
