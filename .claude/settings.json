@@ -8,7 +8,20 @@
       "Bash(python -m pytest tests/backtest/test_lookahead.py::test_t_open_blunts_lookahead_compared_to_t_close -v)",
       "Bash(python -m pytest tests/backtest/)",
       "Bash(git push *)",
-      "Bash(gh pr *)"
+      "Bash(gh pr *)",
+      "Bash(git cherry-pick *)",
+      "Bash(python3 -m pytest tests/backtest/test_history.py -v)",
+      "Bash(pytest tests/backtest/test_history.py::test_save_and_list_and_load_roundtrip -v)",
+      "Bash(pytest tests/backtest/test_history.py -v)",
+      "Bash(python3 -m pytest tests/backtest/test_history.py::test_save_returns_none_on_failed_result -v)",
+      "Bash(python3 -m pytest tests/backtest/test_history.py::test_pin_unpin_round_trip -v)",
+      "Bash(python3 -m pytest tests)",
+      "Bash(python3 -m pytest tests/ui/)",
+      "Bash(gh run *)",
+      "Bash(python3 -m pytest tests/backtest/ -v)",
+      "Bash(python3 -m py_compile ui/pages/backtest_page.py)",
+      "Bash(python3 -m pytest tests/backtest/test_history.py -q)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('ui/pages/backtest_page.py'\\).read\\(\\)\\); ast.parse\\(open\\('ui/components/run_compare.py'\\).read\\(\\)\\); print\\('parse OK'\\)\")"
     ]
   }
 }

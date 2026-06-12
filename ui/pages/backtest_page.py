@@ -122,8 +122,10 @@ def render_backtest_page():
             ),
         )
     
-    # Main content - Three tabs
-    tab1, tab2, tab3 = st.tabs(["📊 静态回测", "🧠 策略回测", "⚔️ 多策略对比"])
+    # Main content - Four tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 静态回测", "🧠 策略回测", "⚔️ 多策略对比", "📜 History"
+    ])
     
     with tab1:
         render_static_backtest(
@@ -156,6 +158,41 @@ def render_backtest_page():
             commission_pct, slippage_pct,
             normalize_weights
         )
+
+    with tab4:
+        render_history_tab()
+
+
+def render_history_tab():
+    """4th tab: persisted history of past backtest runs + compare flow."""
+    from backtest.history import RunHistoryStore
+    from ui.components.run_compare import (
+        render_history_list, render_detail, render_compare,
+    )
+
+    if "history_store" not in st.session_state:
+        st.session_state.history_store = RunHistoryStore()
+    store = st.session_state.history_store
+
+    selected = render_history_list(store)
+    st.divider()
+
+    if 2 <= len(selected) <= 4:
+        if st.button(f"📊 对比选中的 {len(selected)} 个", type="primary"):
+            st.session_state.compare_run_ids = selected
+            st.rerun()
+    elif len(selected) > 4:
+        st.warning(f"最多对比 4 个 (你选了 {len(selected)})")
+    elif len(selected) == 1:
+        st.divider()
+        render_detail(selected[0], store)
+
+    if st.session_state.get("compare_run_ids"):
+        st.divider()
+        render_compare(st.session_state.compare_run_ids, store)
+        if st.button("← 返回列表"):
+            del st.session_state["compare_run_ids"]
+            st.rerun()
 
 
 def render_static_backtest(
@@ -271,7 +308,18 @@ def render_static_backtest(
                 weights=portfolio.weights,
                 config=config
             )
-        
+
+        if result.success:
+            from backtest.history import RunHistoryStore
+            if "history_store" not in st.session_state:
+                st.session_state.history_store = RunHistoryStore()
+            tickers_str = "+".join(result.weights_history.columns[:3])
+            static_name = f"static ({tickers_str})"
+            st.session_state.history_store.save(
+                result, mode="static", name=static_name, strategy_code="",
+                portfolio_name=selected_portfolio,
+            )
+
         if not result.success:
             st.error(f"回测失败: {result.message}")
             return
@@ -434,7 +482,18 @@ def render_dynamic_backtest(
                 strategy_code=strategy['code'],
                 config=config
             )
-        
+
+        if result.success:
+            from backtest.history import RunHistoryStore
+            if "history_store" not in st.session_state:
+                st.session_state.history_store = RunHistoryStore()
+            st.session_state.history_store.save(
+                result, mode="dynamic",
+                name=selected_strategy,
+                strategy_code=strategy['code'],
+                portfolio_name=selected_portfolio,
+            )
+
         if not result.success:
             st.error(f"回测失败: {result.message}")
             return
@@ -644,7 +703,17 @@ def render_multi_strategy_comparison(
                     metrics['交易次数'] = len(result.trades)
                     metrics['总交易成本'] = sum(t.cost for t in result.trades)
                     all_metrics.append(metrics)
-            
+
+                    from backtest.history import RunHistoryStore
+                    if "history_store" not in st.session_state:
+                        st.session_state.history_store = RunHistoryStore()
+                    st.session_state.history_store.save(
+                        result, mode="multi",
+                        name=f"{strategy_name} (multi)",
+                        strategy_code=strategy['code'],
+                        portfolio_name=selected_portfolio,
+                    )
+
             except Exception as e:
                 st.warning(f"策略 '{strategy_name}' 回测失败: {str(e)}")
             
